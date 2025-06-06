@@ -1,1 +1,1 @@
-python-3.10.12 # Ou outra versão como 3.9, 3.11
+python-3.10.12

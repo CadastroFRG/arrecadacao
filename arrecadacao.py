@@ -1,26 +1,13 @@
 import streamlit as st
 import pandas as pd
 import os
-
-# Configurar variáveis de ambiente para locale antes de importar locale
-os.environ['LC_ALL'] = 'en_US.UTF-8'
-os.environ['LANG'] = 'en_US.UTF-8'
-
-import locale
-
-# Tentar setar locale para 'en_US.UTF-8'; se falhar, usar locale básica 'C'
-try:
-    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-except locale.Error:
-    locale.setlocale(locale.LC_ALL, 'C')
-
 import yagmail
 from fpdf import FPDF
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt
+import locale
 import re
-
 
 # Configurar locale para formatação de moeda
 try:
@@ -358,19 +345,13 @@ def gerar_documento_quitacao(dados_completos):
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"quitacao_deficit_{nome_base}.docx"
-    output_pdf_path = f"quitacao_deficit_{nome_base}.pdf"
+    output_pdf_path = f"quitacao_deficit_{nome_base}.pdf" # Still generate a potential name
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
-        try:
-            convert(output_docx_path, output_pdf_path)
-            st.info(f"Arquivo PDF '{output_pdf_path}' gerado.")
-            return output_pdf_path, output_docx_path
-        except Exception as e_pdf:
-            st.warning(f"DOCX gerado, mas falha ao converter para PDF: {e_pdf}")
-            st.info("Verifique se o Microsoft Word ou LibreOffice está instalado e se o erro 'pywintypes' foi resolvido (veja instruções).")
-            return None, output_docx_path
+        st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
+        return None, output_docx_path # Return None for PDF as it's not guaranteed
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
@@ -446,19 +427,13 @@ def gerar_documento_portabilidade(dados_completos):
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"termo_portabilidade_{nome_base}.docx"
-    output_pdf_path = f"termo_portabilidade_{nome_base}.pdf"
+    output_pdf_path = f"termo_portabilidade_{nome_base}.pdf" # Still generate a potential name
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
-        try:
-            convert(output_docx_path, output_pdf_path)
-            st.info(f"Arquivo PDF '{output_pdf_path}' gerado.")
-            return output_pdf_path, output_docx_path
-        except Exception as e_pdf:
-            st.warning(f"DOCX gerado, mas falha ao converter para PDF: {e_pdf}")
-            st.info("Verifique se o Microsoft Word ou LibreOffice está instalado e se o erro 'pywintypes' foi resolvido (veja instruções).")
-            return None, output_docx_path
+        st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
+        return None, output_docx_path # Return None for PDF
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
@@ -514,19 +489,13 @@ def gerar_documento_carta_portabilidade(dados_completos):
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"carta_portabilidade_{nome_base}.docx"
-    output_pdf_path = f"carta_portabilidade_{nome_base}.pdf"
+    output_pdf_path = f"carta_portabilidade_{nome_base}.pdf" # Still generate a potential name
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
-        try:
-            convert(output_docx_path, output_pdf_path)
-            st.info(f"Arquivo PDF '{output_pdf_path}' gerado.")
-            return output_pdf_path, output_docx_path
-        except Exception as e_pdf:
-            st.warning(f"DOCX gerado, mas falha ao converter para PDF: {e_pdf}")
-            st.info("Verifique se o Microsoft Word ou LibreOffice está instalado e se o erro 'pywintypes' foi resolvido (veja instruções).")
-            return None, output_docx_path
+        st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
+        return None, output_docx_path # Return None for PDF
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
@@ -752,7 +721,7 @@ with tab4: # DESCONTO DE DÉFICIT
                     st.session_state.label_quit = f"Docs Quitação ({pessoa_desc})"
                     st.session_state.pdf_file_quit = pdf_p if pdf_p and os.path.exists(pdf_p) else None
                     st.session_state.docx_file_quit = docx_p if docx_p and os.path.exists(docx_p) else None
-                    if not pdf_p and docx_p: st.warning("PDF não gerado, DOCX disponível.")
+                    if not pdf_p and docx_p: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
                     elif not pdf_p and not docx_p: st.error("Falha ao gerar docs.")
                 else: st.error("Falha ao salvar dados.")
     else: st.info("Nenhuma pessoa em 'Desconto de quitação de deficit'.")
@@ -873,7 +842,7 @@ with tab5: # TERMO DE PORTABILIDADE - NOVA ABA
                     st.session_state.label_port = f"Docs Portabilidade ({pessoa_port})"
                     st.session_state.pdf_file_port = pdf_p_port if pdf_p_port and os.path.exists(pdf_p_port) else None
                     st.session_state.docx_file_port = docx_p_port if docx_p_port and os.path.exists(docx_p_port) else None
-                    if not pdf_p_port and docx_p_port: st.warning("PDF não gerado, DOCX disponível.")
+                    if not pdf_p_port and docx_p_port: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
                     elif not pdf_p_port and not docx_p_port: st.error("Falha ao gerar docs.")
                 else: st.error("Falha ao salvar dados.")
     else: st.info("Nenhuma pessoa em 'Termo de Portabilidade'.")
@@ -887,7 +856,7 @@ with tab5: # TERMO DE PORTABILIDADE - NOVA ABA
             with open(st.session_state.docx_file_port, "rb") as f:
                 st.download_button("📥 Baixar DOCX Portabilidade", f, os.path.basename(st.session_state.docx_file_port), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_docx_port_btn", on_click=lambda: setattr(st.session_state, 'docx_file_port', None))
         if st.session_state.pdf_file_port is None and st.session_state.docx_file_port is None:
-               st.session_state.label_port = ""
+                st.session_state.label_port = ""
 
 with tab6: # CARTA DE PORTABILIDADE ENTRE PLANOS (NOVA ABA)
     st.header("📧 Carta de Portabilidade entre Planos")
@@ -943,7 +912,7 @@ with tab6: # CARTA DE PORTABILIDADE ENTRE PLANOS (NOVA ABA)
                     st.session_state.label_carta = f"Docs Carta de Portabilidade ({pessoa_carta})"
                     st.session_state.pdf_file_carta = pdf_p_carta if pdf_p_carta and os.path.exists(pdf_p_carta) else None
                     st.session_state.docx_file_carta = docx_p_carta if docx_p_carta and os.path.exists(docx_p_carta) else None
-                    if not pdf_p_carta and docx_p_carta: st.warning("PDF não gerado, DOCX disponível. Verifique a instalação do Word/LibreOffice.")
+                    if not pdf_p_carta and docx_p_carta: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
                     elif not pdf_p_carta and not docx_p_carta: st.error("Falha ao gerar documentos.")
                 else:
                     st.error("Falha ao salvar dados para a Carta de Portabilidade.")
@@ -958,7 +927,7 @@ with tab6: # CARTA DE PORTABILIDADE ENTRE PLANOS (NOVA ABA)
             with open(st.session_state.docx_file_carta, "rb") as f:
                 st.download_button("📥 Baixar DOCX Carta", f, os.path.basename(st.session_state.docx_file_carta), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_docx_carta_btn", on_click=lambda: setattr(st.session_state, 'docx_file_carta', None))
         if st.session_state.pdf_file_carta is None and st.session_state.docx_file_carta is None:
-               st.session_state.label_carta = ""
+                st.session_state.label_carta = ""
 
 
 st.sidebar.header("📊 Todos os Dados")

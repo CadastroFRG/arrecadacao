@@ -1,13 +1,26 @@
 import streamlit as st
 import pandas as pd
 import os
+
+# Configurar variáveis de ambiente para locale antes de importar locale
+os.environ['LC_ALL'] = 'en_US.UTF-8'
+os.environ['LANG'] = 'en_US.UTF-8'
+
+import locale
+
+# Tentar setar locale para 'en_US.UTF-8'; se falhar, usar locale básica 'C'
+try:
+    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+except locale.Error:
+    locale.setlocale(locale.LC_ALL, 'C')
+
 import yagmail
 from fpdf import FPDF
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt
-import locale
 import re
+
 
 # Configurar locale para formatação de moeda
 try:

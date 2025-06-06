@@ -6,7 +6,6 @@ from fpdf import FPDF
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt
-from docx2pdf import convert
 import locale
 import re
 

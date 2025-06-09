@@ -9,14 +9,15 @@ from docx.shared import Pt
 import locale
 import re
 
+st.set_page_config(layout="wide", page_title="Gestão de Formulários FRG")
+
 # Configurar locale para formatação de moeda
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except locale.Error:
-    try:
-        locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
-    except locale.Error:
-        st.warning("Locale pt_BR não encontrado. A formatação de moeda pode usar '.' como separador decimal.")
+    locale.setlocale(locale.LC_ALL, '')  # Usa o padrão do sistema
+    print("⚠️ Locale pt_BR.UTF-8 não encontrado. Usando locale padrão.")
+    
 
 DATA_PATH = "dados_formulario.csv"
 EMAIL_REMETENTE = "brunomelo@frg.com.br" # ATUALIZE COM SEU E-MAIL
@@ -503,7 +504,7 @@ def gerar_documento_carta_portabilidade(dados_completos):
 
 # --- STREAMLIT UI ---
 # ATUALIZAR AS ABAS AQUI
-st.set_page_config(layout="wide", page_title="Gestão de Formulários FRG")
+
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📥 Formulário Inicial", "📊 Kanban", "📝 Relação de Crédito", "📉 Desconto de Déficit", "📄 Termo de Portabilidade", "📧 Carta de Portabilidade"])
 
 

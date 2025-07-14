@@ -15,8 +15,11 @@ st.set_page_config(layout="wide", page_title="Gestão de Formulários FRG")
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except locale.Error:
-    locale.setlocale(locale.LC_ALL, '')  # Usa o padrão do sistema
-    print("⚠️ Locale pt_BR.UTF-8 não encontrado. Usando locale padrão.")
+    st.warning("⚠️ Locale pt_BR.UTF-8 não encontrado. Tentando usar locale padrão.")
+    try:
+        locale.setlocale(locale.LC_ALL, '')  # Usa o padrão do sistema
+    except locale.Error:
+        st.error("❌ Nenhum locale adequado encontrado. A formatação de moeda pode não estar correta.")
     
 
 DATA_PATH = "dados_formulario.csv"
@@ -34,8 +37,8 @@ def carregar_dados():
         "Nome", "Matricula", "CPF", "Email", "Comentário", "Área", "Etapa",
         "Dados Adicionais", "Creditar", "Banco", "Conta", "Agencia", "NomeAgencia",
         "ValorRS", "TipoEntidade", "Patrocinadora", "Plano", "QtdeCotas", "ValorCota",
-        "DataValorCota", "MesAnoRelacao", "DataPagamento",
-        "NRefDoc", "Rua", "Complemento", "Bairro", "CEP", "Cidade", "UF",
+        "DataValorCota", "MesAnoRelacao", "DataPagamento", "NRefDoc",
+        "Rua", "Complemento", "Bairro", "CEP", "Cidade", "UF",
         "MesCalculoCotaDoc", "Deficit2014", "Deficit2022",
         # NOVAS COLUNAS PARA TERMO DE PORTABILIDADE
         "Data_admissao", "Data_desligamento", "Data_inscricao",
@@ -47,7 +50,9 @@ def carregar_dados():
         "Regime_de_tributacao", "Recursos_portados", "debito", "total_a_ser_portado",
         "Data_base_portabilidade",
         # --- NOVAS COLUNAS PARA CARTA DE PORTABILIDADE ---
-        "Data_de_Transferencia_Carta", "Banco_Carta", "Agencia_Carta", "Conta_Corrente_Carta" 
+        "Data_de_Transferencia_Carta", "Banco_Carta", "Agencia_Carta", "Conta_Corrente_Carta",
+        # --- NOVA COLUNA PARA NUMERO DE RELACAO ---
+        "NRelacao" 
     ]
     if os.path.exists(DATA_PATH):
         try:
@@ -95,24 +100,69 @@ def salvar_dados_completos(nome, dados_dict):
             return df.loc[idx].to_dict()
     return {}
 
-EMAILS_POR_AREA = {"RH": "rh@empresa.com", "Financeiro": "financeiro@empresa.com", "Seguridade": "seguridade@empresa.com"} # Exemplo, adicione mais se necessário
+# ATUALIZADO: E-mails para áreas podem ser lista
+EMAILS_POR_AREA = {
+    "RH": ["rh@empresa.com"], # Exemplo, adicione mais se necessário
+    "Financeiro": ["financeiro@empresa.com", "financeiro.gerencia@empresa.com"], # Exemplo de múltiplos
+    "Seguridade": ["seguridade@empresa.com"]
+}
 
 def enviar_email(email_pessoal, nome, area):
     try:
-        destinatario = EMAILS_POR_AREA.get(area)
-        if not destinatario:
-            st.warning(f"⚠️ Nenhum e-mail configurado para a área: {area}")
-            return
-        # Usar uma senha de aplicativo se o 2FA do Gmail estiver ativado
-        # Certifique-se de que EMAIL_REMETENTE e EMAIL_SENHA estão configurados corretamente
         yag = yagmail.SMTP(EMAIL_REMETENTE, EMAIL_SENHA)
-        assunto = f"Novo cadastro aguardando resposta - {nome}"
-        conteudo = f"Olá equipe de {area},\n\nUm novo formulário foi preenchido por {nome} ({email_pessoal}).\n\nPor favor, acesse o sistema.\n\nAtt,\nSistema Streamlit"
-        yag.send(to=destinatario, subject=assunto, contents=conteudo)
-        st.info(f"E-mail de notificação enviado para {destinatario}.")
+
+        # 1. Envia e-mail para o participante
+        assunto_participante = f"Confirmação de Recebimento - Formulário FRG - {nome}"
+        conteudo_participante = f"Olá {nome},\n\nRecebemos seu formulário com sucesso. Em breve, entraremos em contato ou daremos prosseguimento à sua solicitação.\n\nObrigado,\nEquipe FRG"
+        yag.send(to=email_pessoal, subject=assunto_participante, contents=conteudo_participante)
+        st.info(f"E-mail de confirmação enviado para {email_pessoal}.")
+
+        # 2. Envia e-mail(s) para a(s) área(s)
+        destinatarios_area = EMAILS_POR_AREA.get(area, [])
+        if not destinatarios_area:
+            st.warning(f"⚠️ Nenhum e-mail configurado para a área: {area}. E-mail de notificação não enviado.")
+            return
+        
+        assunto_area = f"Novo cadastro aguardando resposta - {nome}"
+        conteudo_area = f"Olá equipe de {area},\n\nUm novo formulário foi preenchido por {nome} ({email_pessoal}).\n\nPor favor, acesse o sistema.\n\nAtt,\nSistema Streamlit"
+        
+        yag.send(to=destinatarios_area, subject=assunto_area, contents=conteudo_area)
+        st.info(f"E-mail de notificação enviado para as áreas: {', '.join(destinatarios_area)}.")
+
     except Exception as e:
         st.error(f"❌ Erro ao enviar e-mail: {e}.")
 
+# NOVO: Função para obter o próximo número de relação
+def obter_proximo_n_relacao():
+    df = carregar_dados()
+    if 'NRelacao' in df.columns and pd.to_numeric(df['NRelacao'], errors='coerce').notna().any():
+        ultimo_n = pd.to_numeric(df['NRelacao'], errors='coerce').max()
+        if pd.isna(ultimo_n): 
+            return 1
+        return int(ultimo_n) + 1
+    return 1 # Começa em 1 se não houver dados ou coluna
+
+# NOVO: Função para formatar a matrícula
+def formatar_matricula(matricula):
+    matricula = str(matricula).strip()
+    if not matricula:
+        return ""
+    apenas_digitos = re.sub(r'\D', '', matricula)
+    if len(apenas_digitos) > 1:
+        return f"{apenas_digitos[:-1]}-{apenas_digitos[-1]}"
+    return apenas_digitos
+
+# NOVO: Função para formatar a conta (se precisar de um padrão específico)
+def formatar_conta(numero_conta):
+    numero_conta = str(numero_conta).strip()
+    if not numero_conta:
+        return ""
+    # Remove qualquer coisa que não seja dígito
+    apenas_digitos = re.sub(r'\D', '', numero_conta)
+    # Exemplo simples: se o último é o dígito, adiciona traço
+    if len(apenas_digitos) > 1 and len(apenas_digitos) <= 12: # Limite arbitrário para evitar formatar algo grande
+        return f"{apenas_digitos[:-1]}-{apenas_digitos[-1]}"
+    return apenas_digitos # Retorna sem formatar se for muito curto ou já tiver traço, etc.
 
 def gerar_pdf_relacao_credito(dados):
     pdf = FPDF()
@@ -121,25 +171,35 @@ def gerar_pdf_relacao_credito(dados):
     pdf.set_font("Arial", 'B', size=12)
     pdf.cell(0, 10, "REAL GRANDEZA", ln=True, align='C')
     pdf.set_font("Arial", 'B', size=10)
-    pdf.cell(0, 5, "FUNDAÇÃO DE PREVIDENCIAE ASSISTÊNCIA SOCIAL", ln=True, align='C')
+    # AJUSTE: Espaço e acento em Previdência e Assistência
+    pdf.cell(0, 5, "FUNDAÇÃO DE PREVIDÊNCIA E ASSISTÊNCIA SOCIAL", ln=True, align='C')
     pdf.ln(5)
+
     mes_ano_relacao = dados.get('MesAnoRelacao', datetime.now().strftime("%b/%y").lower())
     current_y_for_relation = pdf.get_y()
     pdf.set_font("Arial", size=10)
+
+    # AJUSTE: Obter NRelacao dinamicamente
+    numero_relacao = dados.get('NRelacao', obter_proximo_n_relacao()) 
     pdf.set_xy(150, current_y_for_relation)
-    pdf.multi_cell(50, 5, f"Relação nº 158\n{mes_ano_relacao}", align='R')
+    pdf.multi_cell(50, 5, f"Relação nº {numero_relacao}\n{mes_ano_relacao}", align='R')
+    
     pdf.set_xy(10, current_y_for_relation + 5)
-    pdf.cell(0, 5, f"GBP/AMX {mes_ano_relacao}", ln=False)
+    # AJUSTE: Gerência GBP
+    pdf.cell(0, 5, f"GBP/AMX {mes_ano_relacao}", ln=False) 
     pdf.set_y(current_y_for_relation + 10)
     pdf.ln(5)
+
     pdf.set_font("Arial", '', size=10)
     pdf.cell(0, 7, "DIRETORIA DE SEGURIDADE - DS", ln=True)
-    pdf.cell(0, 7, "GERÊNCIA DE ESTATÍSTICA E ATUÁRIA - GEA", ln=True)
+    # AJUSTE: Alterar gerência de GEA para GBP
+    pdf.cell(0, 7, "GERÊNCIA DE BENEFÍCIOS E PAGAMENTOS - GBP", ln=True) 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', size=12)
     pdf.cell(0, 7, "PORTABILIDADE", ln=True, align='C')
     pdf.ln(5)
     pdf.set_font("Arial", size=10)
+    
     pdf.cell(30, 7, "Creditar:")
     x_before_cod_banco = pdf.get_x()
     pdf.set_x(120)
@@ -149,35 +209,47 @@ def gerar_pdf_relacao_credito(dados):
     pdf.set_x(x_before_cod_banco -20) # Deve ser a mesma X da célula "Creditar:"
     pdf.set_font("Arial", 'B', size=10)
     pdf.cell(0, 7, str(dados.get('Creditar', 'Banco Bradesco')), ln=True)
+    
     pdf.set_font("Arial", size=10)
     pdf.cell(15, 7, "Nome:")
     pdf.set_font("Arial", 'B', size=10)
     pdf.cell(0, 7, "Real Grandeza", ln=True)
+    
+    # AJUSTE: Resolver dados sobrepostos - Cada item em uma nova linha
     pdf.set_font("Arial", size=10)
-    col_width_conta = 30; col_width_cod_ag = 30; col_width_nome_ag = 60; col_width_valor = 0
-    pdf.cell(col_width_conta, 7, f"Conta: {dados.get('Conta', '')}")
-    pdf.cell(col_width_cod_ag, 7, f"Cód. Agência: {dados.get('Agencia', '')}")
-    pdf.cell(col_width_nome_ag, 7, f"Nome da Agência: {dados.get('NomeAgencia', '')}")
+    pdf.cell(0, 7, f"Conta: {formatar_conta(dados.get('Conta', ''))}", ln=True) # FORMATAR CONTA
+    pdf.cell(0, 7, f"Cód. Agência: {dados.get('Agencia', '')}", ln=True)
+    pdf.cell(0, 7, f"Nome da Agência: {dados.get('NomeAgencia', '')}", ln=True)
+    
+    # AJUSTE: Calcular ValorRS automaticamente
+    qtde_cotas_val = desformatar_string_para_float(dados.get('QtdeCotas', '0'))
+    valor_cota_val = desformatar_string_para_float(dados.get('ValorCota', '0'))
+    valor_total_rs_calculado = qtde_cotas_val * valor_cota_val
+
     pdf.set_font("Arial", 'B', size=10)
-    pdf.cell(col_width_valor, 7, f"Valor em R$: {dados.get('ValorRS', '')}", ln=True)
+    pdf.cell(0, 7, f"Valor em R$: {formatar_moeda_para_exibicao(valor_total_rs_calculado)}", ln=True) # Usar valor calculado
     pdf.set_font("Arial", size=10)
+    
     pdf.cell(35, 7, "Tipo de Entidade:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('TipoEntidade', 'Fechada')), ln=True); pdf.set_font("Arial", size=10)
     pdf.cell(35, 7, "PATROCINADORA:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Patrocinadora', 'FURNAS')), ln=True); pdf.set_font("Arial", size=10)
     pdf.cell(35, 7, "PLANO:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Plano', 'CONTRIBUIÇÃO DEFINIDA - CD')), ln=True); pdf.set_font("Arial", size=10)
-    pdf.cell(150, 7, "Total", align='R'); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('ValorRS', '')), ln=True); pdf.set_font("Arial", size=10)
+    
+    pdf.cell(150, 7, "Total", align='R'); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(valor_total_rs_calculado), ln=True); pdf.set_font("Arial", size=10) # Usar valor calculado
     pdf.ln(3)
     pdf.cell(0, 7, f"Para pagamento dia: {dados.get('DataPagamento', '03/jun/2025')}", ln=True)
     pdf.ln(7)
     pdf.set_font("Arial", 'B', size=11); pdf.cell(0, 7, "Identificação do Participante", ln=True, align='C'); pdf.set_font("Arial", size=10)
     pdf.cell(20, 7, "Nome:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Nome', '')), ln=True); pdf.set_font("Arial", size=10)
-    pdf.cell(20, 7, "Matrícula:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Matricula', '')), ln=True); pdf.set_font("Arial", size=10)
+    pdf.cell(20, 7, "Matrícula:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_matricula(dados.get('Matricula', '')), ln=True); pdf.set_font("Arial", size=10) # FORMATAR MATRICULA
     pdf.cell(20, 7, "C.P.F.:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('CPF', '')), ln=True); pdf.set_font("Arial", size=10)
-    pdf.cell(30, 7, "Qtde. de Cotas:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('QtdeCotas', '')), ln=True); pdf.set_font("Arial", size=10)
+    pdf.cell(30, 7, "Qtde. de Cotas:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(qtde_cotas_val), ln=True); pdf.set_font("Arial", size=10) # FORMATAR VALOR
     data_valor_cota_pdf = dados.get('DataValorCota', '30/04/2025')
-    pdf.cell(55, 7, f"Valor da Cota ({data_valor_cota_pdf}):"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('ValorCota', '')), ln=True); pdf.set_font("Arial", size=10)
+    pdf.cell(55, 7, f"Valor da Cota ({data_valor_cota_pdf}):"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(valor_cota_val), ln=True); pdf.set_font("Arial", size=10) # FORMATAR VALOR
     pdf.ln(10)
     pdf.set_font("Arial", 'I', size=9); pdf.cell(0, 7, "Patrícia Melo e Souza", ln=True, align='C'); pdf.cell(0, 5, "Diretora de Seguridade", ln=True, align='C')
-    output_filename = f"relacao_credito_{dados.get('Nome', 'Desconhecido').replace(' ', '_')}.pdf"
+    
+    # AJUSTE: Incluir NRelacao no nome do arquivo para diferenciá-lo
+    output_filename = f"relacao_credito_{dados.get('Nome', 'Desconhecido').replace(' ', '_')}_N{numero_relacao}.pdf"
     pdf.output(output_filename, 'F')
     return output_filename
 
@@ -317,11 +389,11 @@ def gerar_documento_quitacao(dados_completos):
         "{{N_REF}}": str(dados_completos.get('NRefDoc', '')),
         "{{NOME_PARTICIPANTE}}": str(dados_completos.get('Nome', '')),
         "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')),
-        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')),
+        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''), # Tratamento para 'nan'
         "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')),
         "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')),
         "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}",
-        "{{ASSUNTO_MATRICULA}}": str(dados_completos.get('Matricula', '')),
+        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
         "{{ASSUNTO_PLANO}}": str(dados_completos.get('Plano', '')),
         "{{ASSUNTO_EMPRESA}}": str(dados_completos.get('Patrocinadora', '')),
         "{{DATA_PAGAMENTO_CREDITO}}": str(dados_completos.get('DataPagamento', '')),
@@ -383,8 +455,8 @@ def gerar_documento_portabilidade(dados_completos):
     substituicoes = {
         "{{NOME_PARTICIPANTE}}": str(dados_completos.get('Nome', '')),
         "{{CPF}}": str(dados_completos.get('CPF', '')),
-        "{{Matricula}}": str(dados_completos.get('Matricula', '')),
-        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')), # Reutilizado
+        "{{Matricula}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
+        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''), # Reutilizado
         "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')), # Reutilizado
         "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')), # Reutilizado
         "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}", # Reutilizado
@@ -467,16 +539,20 @@ def gerar_documento_carta_portabilidade(dados_completos):
         "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')),
         "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}",
         "{{ASSUNTO_PLANO}}": str(dados_completos.get('Plano', '')), # Plano original
+        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
+        "{{CPF}}": str(dados_completos.get('CPF', '')),
         # Dados específicos da carta de portabilidade (inputs do usuário)
         "{{DATA_DE_TRANSFERENCIA}}": data_transferencia,
         "{{BANCO}}": banco_carta,
         "{{AGENCIA}}": agencia_carta,
-        "{{CONTA_CORRENTE}}": conta_corrente_carta,
+        "{{CONTA_CORRENTE}}": formatar_conta(conta_corrente_carta), # FORMATAR CONTA
         "{{N_Ref}}": str(dados_completos.get('NRefDoc', '')), # Reutiliza NRefDoc se quiser
         # Data atual para o cabeçalho da carta
-        "{{DATA_ATUAL_CARTA}}": datetime.now().strftime("%d de %B de %Y").replace('maio', 'maio'), # Ajuste de mês para português
-        # Lembre-se de ajustar 'maio' para o mês atual, se precisar de flexibilidade para todos os meses
-        # Ex: .replace('January', 'janeiro').replace('February', 'fevereiro')...
+        "{{DATA_ATUAL_CARTA}}": datetime.now().strftime("%d de %B de %Y").replace(
+            'January', 'janeiro').replace('February', 'fevereiro').replace('March', 'março').replace(
+            'April', 'abril').replace('May', 'maio').replace('June', 'junho').replace(
+            'July', 'julho').replace('August', 'agosto').replace('September', 'setembro').replace(
+            'October', 'outubro').replace('November', 'novembro').replace('December', 'dezembro'),
     }
     
     # --- LINHAS DE DEBUG ADICIONADAS PARA CARTA DE PORTABILIDADE ---
@@ -501,6 +577,16 @@ def gerar_documento_carta_portabilidade(dados_completos):
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
 
+
+# Initialize session state for file paths if not already present
+if 'download_pdf_relacao' not in st.session_state:
+    st.session_state.download_pdf_relacao = None
+if 'download_docx_quitacao' not in st.session_state:
+    st.session_state.download_docx_quitacao = None
+if 'download_docx_portabilidade' not in st.session_state:
+    st.session_state.download_docx_portabilidade = None
+if 'download_docx_carta' not in st.session_state:
+    st.session_state.download_docx_carta = None
 
 # --- STREAMLIT UI ---
 # ATUALIZAR AS ABAS AQUI
@@ -528,10 +614,12 @@ with tab1:
                     "Deficit2014": "0,00", "Deficit2022": "0,00",
                     "Parcela_Participante": "0,00", "Parcela_Patrocinadora": "0,00",
                     "Total_acumulado": "0,00", "Recursos_portados": "0,00", "debito": "0,00",
-                    "total_a_ser_portado": "0,00"
+                    "total_a_ser_portado": "0,00",
+                    "NRelacao": obter_proximo_n_relacao() # ATUALIZADO: Inicializa NRelacao
                 })
                 salvar_dados(novo_dado)
                 st.success(f"✅ Dados de {nome_t1} salvos!")
+                enviar_email(email_t1, nome_t1, area_t1) # Envia e-mail
                 st.rerun()
             else:
                 st.warning("⚠️ Preencha Nome, CPF e Email.")
@@ -554,7 +642,7 @@ with tab2: # KANBAN
             for idx_k, row_k in etapa_df_k.iterrows():
                 key_base_k = f"{row_k.get('Nome','key')}_{idx_k}_{etapa_k.replace(' ','_')}"
                 with st.expander(f"{row_k.get('Nome','Sem Nome')} ({row_k.get('Area','N/A')})", expanded=False):
-                    st.caption(f"Matrícula: {row_k.get('Matricula', 'N/A')} | CPF: {row_k.get('CPF', 'N/A')}")
+                    st.caption(f"Matrícula: {formatar_matricula(row_k.get('Matricula', 'N/A'))} | CPF: {row_k.get('CPF', 'N/A')}") # FORMATAR MATRICULA
                     
                     # Botões de transição
                     if etapa_k == "Aguardando Resposta":
@@ -565,7 +653,7 @@ with tab2: # KANBAN
                             atualizar_etapa(row_k["Nome"], "Relação de Crédito"); st.rerun()
                         if st.button("➡️ Termo Portabilidade", key=f"port_k_{key_base_k}"):
                             atualizar_etapa(row_k["Nome"], "Termo de Portabilidade"); st.rerun()
-                        if st.button("➡️ Carta de Portabilidade", key=f"carta_k_{key_base_k}"): # NOVO BOTÃO
+                        if st.button("➡️ Carta de Portabilidade", key=f"carta_k_{key_base_k}"): 
                             atualizar_etapa(row_k["Nome"], "Carta de Portabilidade"); st.rerun()
                     elif etapa_k == "Relação de Crédito":
                         if st.button("➡️ Desconto Déficit", key=f"desc_{key_base_k}"):
@@ -580,363 +668,326 @@ with tab2: # KANBAN
                             atualizar_etapa(row_k["Nome"], "Relação de Crédito"); st.rerun()
                     elif etapa_k == "Termo de Portabilidade":
                         st.info("Preencher na Aba 'Termo de Portabilidade'")
-                        if st.button("➡️ Carta de Portabilidade", key=f"port_to_carta_{key_base_k}"): # Transição para Carta
+                        if st.button("➡️ Carta de Portabilidade", key=f"next_carta_from_termo_{key_base_k}"):
                             atualizar_etapa(row_k["Nome"], "Carta de Portabilidade"); st.rerun()
-                        if st.button("⏪ Voltar para Respondido", key=f"volt_resp_port_{key_base_k}"):
-                            atualizar_etapa(row_k["Nome"], "Respondido"); st.rerun()
-                    elif etapa_k == "Carta de Portabilidade": # NOVA ETAPA NO KANBAN
+                        if st.button("⏪ Voltar para Desconto de Quitação", key=f"volt_desc_termo_{key_base_k}"):
+                            atualizar_etapa(row_k["Nome"], "Desconto de quitação de deficit"); st.rerun()
+                    elif etapa_k == "Carta de Portabilidade":
                         st.info("Preencher na Aba 'Carta de Portabilidade'")
-                        if st.button("⏪ Voltar para Termo Portabilidade", key=f"volt_term_carta_{key_base_k}"):
+                        if st.button("✔️ Concluído", key=f"concluido_{key_base_k}"):
+                            # Aqui você pode definir uma etapa "Concluído" ou remover do Kanban
+                            st.success(f"Processo para {row_k['Nome']} marcado como concluído!")
+                            # Exemplo: df_kanban.drop(idx_k, inplace=True) e salvar_dados(df_kanban)
+                            # Ou mudar para uma etapa "Concluído" que não aparece nas colunas ativas
+                            atualizar_etapa(row_k["Nome"], "Processo Concluído") # Exemplo
+                            st.rerun()
+                        if st.button("⏪ Voltar para Termo de Portabilidade", key=f"volt_termo_carta_{key_base_k}"):
                             atualizar_etapa(row_k["Nome"], "Termo de Portabilidade"); st.rerun()
 
 
-with tab3: # RELAÇÃO DE CRÉDITO
-    st.header("📝 Detalhes da Relação de Crédito")
-    df_rel = carregar_dados()
-    fase_df_rel = df_rel[df_rel["Etapa"] == "Relação de Crédito"] if "Etapa" in df_rel.columns else pd.DataFrame()
-    if 'pdf_file_rc' not in st.session_state: st.session_state.pdf_file_rc = None
-    if 'pdf_label_rc' not in st.session_state: st.session_state.pdf_label_rc = ""
+with tab3: # Relação de Crédito
+    st.header("📝 Relação de Crédito")
+    df_relacao = carregar_dados()
+    df_relacao_credito = df_relacao[df_relacao["Etapa"] == "Relação de Crédito"]
 
-    if not fase_df_rel.empty:
-        nomes_rel = fase_df_rel["Nome"].unique()
-        pessoa_rel_key = 'sel_pessoa_rel_tab3'
-        if pessoa_rel_key not in st.session_state or st.session_state[pessoa_rel_key] not in nomes_rel:
-            st.session_state[pessoa_rel_key] = nomes_rel[0]
-        pessoa_rel = st.selectbox("Pessoa:", nomes_rel, key=pessoa_rel_key)
-        dados_pessoa_rel = fase_df_rel[fase_df_rel["Nome"] == pessoa_rel].iloc[0].to_dict()
-
-        with st.form(f"form_rel_{pessoa_rel.replace(' ','_')}"):
-            st.subheader(f"Dados para {pessoa_rel}")
-            c1, c2 = st.columns(2)
-            # Coluna 1
-            dados_adicionais_val = str(dados_pessoa_rel.get("Dados Adicionais", ""))
-            creditar_val = str(dados_pessoa_rel.get("Creditar", "Banco Bradesco S.A."))
-            banco_val = str(dados_pessoa_rel.get("Banco", "237"))
-            conta_val = str(dados_pessoa_rel.get("Conta", ""))
-            agencia_val = str(dados_pessoa_rel.get("Agencia", ""))
-            nome_agencia_val = str(dados_pessoa_rel.get("NomeAgencia", ""))
-            valor_rs_val = str(dados_pessoa_rel.get("ValorRS", "0,00"))
-            with c1:
-                dado_extra_rc_t3 = st.text_area("Info Adicionais (Portabilidade)", value=dados_adicionais_val, key=f"dado_extra_rc_t3_{pessoa_rel}")
-                creditar_rc_t3 = st.text_input("Banco a Creditar", value=creditar_val, key=f"creditar_rc_t3_{pessoa_rel}")
-                banco_rc_t3 = st.text_input("Cód. Banco", value=banco_val, key=f"banco_rc_t3_{pessoa_rel}")
-                conta_rc_t3 = st.text_input("Conta", value=conta_val, key=f"conta_rc_t3_{pessoa_rel}")
-            # Coluna 2
-            agencia_rc_t3 = st.text_input("Cód. Agência", value=agencia_val, key=f"agencia_rc_t3_{pessoa_rel}")
-            nome_agencia_rc_t3 = st.text_input("Nome Agência", value=nome_agencia_val, key=f"nome_agencia_rc_t3_{pessoa_rel}")
-            valor_rs_rc_t3 = st.text_input("Valor Total R$", value=valor_rs_val, key=f"valor_rs_rc_t3_{pessoa_rel}")
-            tipo_entidade_val = str(dados_pessoa_rel.get("TipoEntidade", "Fechada"))
-            patrocinadora_val = str(dados_pessoa_rel.get("Patrocinadora", "FURNAS"))
-            plano_val = str(dados_pessoa_rel.get("Plano", "CONTRIBUIÇÃO DEFINIDA - CD"))
-            qtde_cotas_val = str(dados_pessoa_rel.get("QtdeCotas", "0,00"))
-            valor_cota_val = str(dados_pessoa_rel.get("ValorCota", "0,00"))
-            data_vc_val = str(dados_pessoa_rel.get("DataValorCota", "dd/mm/aaaa"))
-            with c2:
-                tipo_entidade_rc_t3 = st.text_input("Tipo Entidade", value=tipo_entidade_val, key=f"tipo_entidade_rc_t3_{pessoa_rel}")
-                patrocinadora_rc_t3 = st.text_input("Patrocinadora", value=patrocinadora_val, key=f"patrocinadora_rc_t3_{pessoa_rel}")
-                plano_rc_t3 = st.text_input("Plano", value=plano_val, key=f"plano_rc_t3_{pessoa_rel}")
-                qtde_cotas_rc_t3 = st.text_input("Qtde Cotas", value=qtde_cotas_val, help="Ex: 12345,67", key=f"qtde_cotas_rc_t3_{pessoa_rel}")
-                valor_cota_rc_t3 = st.text_input("Valor Cota", value=valor_cota_val, help="Ex: 12,345678", key=f"valor_cota_rc_t3_{pessoa_rel}")
-                data_vc_rc_t3 = st.text_input("Data Base Cota", value=data_vc_val, key=f"data_vc_rc_t3_{pessoa_rel}")
-
-            mes_ano_rel_val = str(dados_pessoa_rel.get("MesAnoRelacao", datetime.now().strftime("%b/%y").lower()))
-            data_pag_val = str(dados_pessoa_rel.get("DataPagamento", "dd/mm/aaaa"))
-            mes_ano_rel_rc_t3 = st.text_input("Mês/Ano Relação", value=mes_ano_rel_val, key=f"mes_ano_rel_rc_t3_{pessoa_rel}")
-            data_pag_rc_t3 = st.text_input("Data Pagamento PDF", value=data_pag_val, key=f"data_pag_rc_t3_{pessoa_rel}")
-            
-            submitted_rc_t3 = st.form_submit_button("💾 Salvar e Gerar PDF (Relação)")
-            if submitted_rc_t3:
-                dados_save_rc = {
-                    "Dados Adicionais": dado_extra_rc_t3, "Creditar": creditar_rc_t3, "Banco": banco_rc_t3,
-                    "Conta": conta_rc_t3, "Agencia": agencia_rc_t3, "NomeAgencia": nome_agencia_rc_t3,
-                    "ValorRS": valor_rs_rc_t3, "TipoEntidade": tipo_entidade_rc_t3, "Patrocinadora": patrocinadora_rc_t3,
-                    "Plano": plano_rc_t3, "QtdeCotas": qtde_cotas_rc_t3, "ValorCota": valor_cota_rc_t3,
-                    "DataValorCota": data_vc_rc_t3, "MesAnoRelacao": mes_ano_rel_rc_t3, "DataPagamento": data_pag_rc_t3
-                }
-                dados_att_rc = salvar_dados_completos(pessoa_rel, dados_save_rc)
-                if dados_att_rc:
-                    pdf_path_rc = gerar_pdf_relacao_credito(dados_att_rc)
-                    st.success(f"✅ Dados salvos para {pessoa_rel}!")
-                    if pdf_path_rc and os.path.exists(pdf_path_rc):
-                        st.session_state.pdf_file_rc = pdf_path_rc
-                        st.session_state.pdf_label_rc = f"📥 Baixar PDF Relação ({pessoa_rel})"
-                else: st.error("Falha ao salvar dados.")
-    else: st.info("Nenhuma pessoa em 'Relação de Crédito'.")
-
-    if st.session_state.get('pdf_file_rc') and os.path.exists(st.session_state.pdf_file_rc):
-        with open(st.session_state.pdf_file_rc, "rb") as f:
-            st.download_button(st.session_state.pdf_label_rc, f, os.path.basename(st.session_state.pdf_file_rc), "application/pdf", key="dl_pdf_rc_btn", on_click=lambda: setattr(st.session_state, 'pdf_file_rc', None))
-
-
-with tab4: # DESCONTO DE DÉFICIT
-    st.header("📉 Desconto de Déficit e Documento de Quitação")
-    df_desc = carregar_dados()
-    fase_df_desc = df_desc[df_desc["Etapa"] == "Desconto de quitação de deficit"] if "Etapa" in df_desc.columns else pd.DataFrame()
-
-    if 'pdf_file_quit' not in st.session_state: st.session_state.pdf_file_quit = None
-    if 'docx_file_quit' not in st.session_state: st.session_state.docx_file_quit = None
-    if 'label_quit' not in st.session_state: st.session_state.label_quit = ""
-
-    if not fase_df_desc.empty:
-        nomes_desc = fase_df_desc["Nome"].unique()
-        pessoa_desc_key = 'sel_pessoa_desc_tab4'
-        if pessoa_desc_key not in st.session_state or st.session_state[pessoa_desc_key] not in nomes_desc:
-            st.session_state[pessoa_desc_key] = nomes_desc[0]
-        pessoa_desc = st.selectbox("Pessoa:", nomes_desc, key=pessoa_desc_key)
-        dados_pessoa_desc = fase_df_desc[fase_df_desc["Nome"] == pessoa_desc].iloc[0].to_dict()
-
-        with st.form(f"form_desc_{pessoa_desc.replace(' ','_')}"):
-            st.subheader(f"Dados para Documento de Quitação: {pessoa_desc}")
-            n_ref_t4 = st.text_input("N.Ref (Doc):", value=str(dados_pessoa_desc.get("NRefDoc", "")), key=f"nref_t4_{pessoa_desc}")
-            c1_t4, c2_t4 = st.columns(2)
-            with c1_t4:
-                rua_t4 = st.text_input("Rua:", value=str(dados_pessoa_desc.get("Rua", "")), key=f"rua_t4_{pessoa_desc}")
-                comp_t4 = st.text_input("Complemento:", value=str(dados_pessoa_desc.get("Complemento", "")), key=f"comp_t4_{pessoa_desc}")
-                bairro_t4 = st.text_input("Bairro:", value=str(dados_pessoa_desc.get("Bairro", "")), key=f"bairro_t4_{pessoa_desc}")
-            with c2_t4:
-                cep_t4 = st.text_input("CEP:", value=str(dados_pessoa_desc.get("CEP", "")), key=f"cep_t4_{pessoa_desc}")
-                cidade_t4 = st.text_input("Cidade:", value=str(dados_pessoa_desc.get("Cidade", "")), key=f"cidade_t4_{pessoa_desc}")
-                uf_t4 = st.text_input("UF:", value=str(dados_pessoa_desc.get("UF", "")), max_chars=2, key=f"uf_t4_{pessoa_desc}")
-            
-            mes_calc_t4 = st.text_input("Mês Cálculo Cota (Doc.) (Ex: abril/2025):", value=str(dados_pessoa_desc.get("MesCalculoCotaDoc", "")), key=f"mes_calc_t4_{pessoa_desc}")
-            
-            st.markdown("**Valores de Déficit (Use somente números. Para decimais, use vírgula, ex: 20000 ou 2000,50):**")
-            def14_t4 = st.text_input("Déficit 2014 (R$):", value=str(dados_pessoa_desc.get("Deficit2014", "0,00")), key=f"def14_t4_{pessoa_desc}")
-            def22_t4 = st.text_input("Déficit 2022 (R$):", value=str(dados_pessoa_desc.get("Deficit2022", "0,00")), key=f"def22_t4_{pessoa_desc}")
-
-            submitted_desc_t4 = st.form_submit_button("💾 Salvar e Gerar Documentos (Quitação)")
-            if submitted_desc_t4:
-                val_def14_float_debug = desformatar_string_para_float(def14_t4)
-                val_def22_float_debug = desformatar_string_para_float(def22_t4)
-                
-                dados_save_desc = {
-                    "NRefDoc": n_ref_t4, "Rua": rua_t4, "Complemento": comp_t4, "Bairro": bairro_t4,
-                    "CEP": cep_t4, "Cidade": cidade_t4, "UF": uf_t4, "MesCalculoCotaDoc": mes_calc_t4,
-                    "Deficit2014": formatar_moeda_para_exibicao(val_def14_float_debug), # Salva formatado
-                    "Deficit2022": formatar_moeda_para_exibicao(val_def22_float_debug)  # Salva formatado
-                }
-                dados_att_desc = salvar_dados_completos(pessoa_desc, dados_save_desc)
-                if dados_att_desc:
-                    pdf_p, docx_p = gerar_documento_quitacao(dados_att_desc)
-                    st.success(f"✅ Dados salvos para {pessoa_desc}!")
-                    st.session_state.label_quit = f"Docs Quitação ({pessoa_desc})"
-                    st.session_state.pdf_file_quit = pdf_p if pdf_p and os.path.exists(pdf_p) else None
-                    st.session_state.docx_file_quit = docx_p if docx_p and os.path.exists(docx_p) else None
-                    if not pdf_p and docx_p: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
-                    elif not pdf_p and not docx_p: st.error("Falha ao gerar docs.")
-                else: st.error("Falha ao salvar dados.")
-    else: st.info("Nenhuma pessoa em 'Desconto de quitação de deficit'.")
-
-    if st.session_state.get('pdf_file_quit') and os.path.exists(st.session_state.pdf_file_quit):
-        with open(st.session_state.pdf_file_quit, "rb") as f:
-            st.download_button("📥 Baixar PDF Quitação", f, os.path.basename(st.session_state.pdf_file_quit), "application/pdf", key="dl_pdf_quit_btn", on_click=lambda: setattr(st.session_state, 'pdf_file_quit', None))
-    if st.session_state.get('docx_file_quit') and os.path.exists(st.session_state.docx_file_quit):
-        with open(st.session_state.docx_file_quit, "rb") as f:
-            st.download_button("📥 Baixar DOCX Quitação", f, os.path.basename(st.session_state.docx_file_quit), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_docx_quit_btn", on_click=lambda: setattr(st.session_state, 'docx_file_quit', None))
-        # Limpar label após botões serem exibidos e clicados
-        # Este on_click lambda irá limpar o estado quando o botão for clicado, mas
-        # você precisa recarregar a página ou fazer algo para o botão desaparecer.
-        # Uma alternativa é usar um callback de submit que limpa o estado.
-
-with tab5: # TERMO DE PORTABILIDADE - NOVA ABA
-    st.header("📄 Termo de Portabilidade")
-    df_port = carregar_dados()
-    fase_df_port = df_port[df_port["Etapa"] == "Termo de Portabilidade"] if "Etapa" in df_port.columns else pd.DataFrame()
-
-    if 'pdf_file_port' not in st.session_state: st.session_state.pdf_file_port = None
-    if 'docx_file_port' not in st.session_state: st.session_state.docx_file_port = None
-    if 'label_port' not in st.session_state: st.session_state.label_port = ""
-
-    if not fase_df_port.empty:
-        nomes_port = fase_df_port["Nome"].unique()
-        pessoa_port_key = 'sel_pessoa_port_tab5'
-        if pessoa_port_key not in st.session_state or st.session_state[pessoa_port_key] not in nomes_port:
-            st.session_state[pessoa_port_key] = nomes_port[0]
-        pessoa_port = st.selectbox("Pessoa:", nomes_port, key=pessoa_port_key)
-        dados_pessoa_port = fase_df_port[fase_df_port["Nome"] == pessoa_port].iloc[0].to_dict()
-
-        with st.form(f"form_port_{pessoa_port.replace(' ','_')}"):
-            st.subheader(f"Dados para Termo de Portabilidade: {pessoa_port}")
-
-            st.markdown("### Dados do Participante")
-            c_part1, c_part2 = st.columns(2)
-            with c_part1:
-                data_admissao_t5 = st.text_input("Data de Admissão (dd/mm/aaaa):", value=str(dados_pessoa_port.get("Data_admissao", "")), key=f"data_adm_t5_{pessoa_port}")
-                data_desligamento_t5 = st.text_input("Data de Desligamento (dd/mm/aaaa):", value=str(dados_pessoa_port.get("Data_desligamento", "")), key=f"data_des_t5_{pessoa_port}")
-            with c_part2:
-                data_inscricao_t5 = st.text_input("Data de Inscrição no Plano (dd/mm/aaaa):", value=str(dados_pessoa_port.get("Data_inscricao", "")), key=f"data_ins_t5_{pessoa_port}")
-                # Reuso de campos de endereço já existentes
-                st.info(f"Endereço: {str(dados_pessoa_port.get('Rua', '')).replace('nan','')}, {str(dados_pessoa_port.get('Complemento', '')).replace('nan', '')} - {str(dados_pessoa_port.get('Bairro', '')).replace('nan', '')}, {str(dados_pessoa_port.get('Cidade', '')).replace('nan', '')} - {str(dados_pessoa_port.get('UF', '')).replace('nan', '')}, CEP: {str(dados_pessoa_port.get('CEP', '')).replace('nan', '')}") # Garantindo strings
-            
-            st.markdown("### Dados do Plano Receptor")
-            c_pr1, c_pr2 = st.columns(2)
-            with c_pr1:
-                plano_beneficio_t5 = st.text_input("Nome do Plano de Benefício Receptor:", value=str(dados_pessoa_port.get("plano_de_beneficio", "")), key=f"plano_ben_t5_{pessoa_port}")
-                cnpb_t5 = st.text_input("CNPB (Plano Receptor):", value=str(dados_pessoa_port.get("CNPB", "")), key=f"cnpb_t5_{pessoa_port}")
-                plano_receptor_t5 = st.text_input("Nome do Plano Receptor:", value=str(dados_pessoa_port.get("plano_receptor", "")), key=f"plano_rec_t5_{pessoa_port}")
-                cnpj_plano_receptor_t5 = st.text_input("CNPJ do Plano Receptor:", value=str(dados_pessoa_port.get("cnpj_plano_receptor", "")), key=f"cnpj_pr_t5_{pessoa_port}")
-                endereco_plano_receptor_t5 = st.text_input("Endereço do Plano Receptor:", value=str(dados_pessoa_port.get("endereco_plano_receptor", "")), key=f"end_pr_t5_{pessoa_port}")
-                cep_plano_receptor_t5 = st.text_input("CEP do Plano Receptor:", value=str(dados_pessoa_port.get("cep_plano_receptor", "")), key=f"cep_pr_t5_{pessoa_port}")
-            with c_pr2:
-                cidade_plano_receptor_t5 = st.text_input("Cidade-UF do Plano Receptor:", value=str(dados_pessoa_port.get("cidade_plano_receptor", "")), key=f"cidade_pr_t5_{pessoa_port}")
-                contato_plano_receptor_t5 = st.text_input("Contato do Plano Receptor:", value=str(dados_pessoa_port.get("contato_plano_receptor", "")), key=f"cont_pr_t5_{pessoa_port}")
-                telefone_plano_receptor_t5 = st.text_input("Telefone do Plano Receptor:", value=str(dados_pessoa_port.get("telefone_plano_receptor", "")), key=f"tel_pr_t5_{pessoa_port}")
-                email_plano_receptor_t5 = st.text_input("Email do Plano Receptor:", value=str(dados_pessoa_port.get("email_plano_receptor", "")), key=f"email_pr_t5_{pessoa_port}")
-                banco_plano_receptor_t5 = st.text_input("Nome - N.º do Banco:", value=str(dados_pessoa_port.get("banco_plano_receptor", "")), key=f"banco_pr_t5_{pessoa_port}")
-                agencia_plano_receptor_t5 = st.text_input("Agência - N.º / Nome / Cidade / UF:", value=str(dados_pessoa_port.get("agencia_plano_receptor", "")), key=f"ag_pr_t5_{pessoa_port}")
-                conta_plano_receptor_t5 = st.text_input("Conta Corrente:", value=str(dados_pessoa_port.get("conta_plano_receptor", "")), key=f"conta_pr_t5_{pessoa_port}")
-
-            st.markdown("### Dados da Portabilidade (Valores em R$)")
-            st.info("Use somente números. Para decimais, use vírgula, ex: 12345,67")
-            c_port_val1, c_port_val2 = st.columns(2)
-            with c_port_val1:
-                parcela_participante_t5 = st.text_input("Direito Acumulado - Parcela Participante:", value=str(dados_pessoa_port.get("Parcela_Participante", "0,00")), key=f"pp_t5_{pessoa_port}")
-                parcela_patrocinadora_t5 = st.text_input("Direito Acumulado - Parcela Patrocinadora:", value=str(dados_pessoa_port.get("Parcela_Patrocinadora", "0,00")), key=f"ppa_t5_{pessoa_port}")
-                regime_tributacao_t5 = st.text_input("Regime de Tributação:", value=str(dados_pessoa_port.get("Regime_de_tributacao", "")), key=f"reg_trib_t5_{pessoa_port}")
-                recursos_portados_t5 = st.text_input("Recursos Portados de Entidades Fechadas:", value=str(dados_pessoa_port.get("Recursos_portados", "0,00")), key=f"rec_port_t5_{pessoa_port}")
-            with c_port_val2:
-                debito_t5 = st.text_input("Débitos junto à Real Grandeza:", value=str(dados_pessoa_port.get("debito", "0,00")), key=f"debito_t5_{pessoa_port}")
-                data_base_portabilidade_t5 = st.text_input("Data Base (dd/mm/aaaa):", value=str(dados_pessoa_port.get("Data_base_portabilidade", "")), key=f"data_base_port_t5_{pessoa_port}")
-
-            submitted_port_t5 = st.form_submit_button("💾 Salvar e Gerar Documentos (Portabilidade)")
-            if submitted_port_t5:
-                # Converter para float para cálculos e depois formatar para salvar no CSV
-                val_pp_float = desformatar_string_para_float(parcela_participante_t5)
-                val_ppa_float = desformatar_string_para_float(parcela_patrocinadora_t5)
-                val_rec_port_float = desformatar_string_para_float(recursos_portados_t5)
-                val_debito_float = desformatar_string_para_float(debito_t5)
-
-                # Cálculos para o CSV (salva o resultado dos cálculos, não os inputs puros)
-                total_acumulado_calc = val_pp_float + val_ppa_float
-                total_a_ser_portado_calc = total_acumulado_calc - val_debito_float
-
-                dados_save_port = {
-                    "Data_admissao": data_admissao_t5,
-                    "Data_desligamento": data_desligamento_t5,
-                    "Data_inscricao": data_inscricao_t5,
-                    "plano_de_beneficio": plano_beneficio_t5,
-                    "CNPB": cnpb_t5,
-                    "plano_receptor": plano_receptor_t5,
-                    "cnpj_plano_receptor": cnpj_plano_receptor_t5,
-                    "endereco_plano_receptor": endereco_plano_receptor_t5,
-                    "cep_plano_receptor": cep_plano_receptor_t5,
-                    "cidade_plano_receptor": cidade_plano_receptor_t5,
-                    "contato_plano_receptor": contato_plano_receptor_t5,
-                    "telefone_plano_receptor": telefone_plano_receptor_t5,
-                    "email_plano_receptor": email_plano_receptor_t5,
-                    "banco_plano_receptor": banco_plano_receptor_t5,
-                    "agencia_plano_receptor": agencia_plano_receptor_t5,
-                    "conta_plano_receptor": conta_plano_receptor_t5,
-                    "Parcela_Participante": formatar_moeda_para_exibicao(val_pp_float),
-                    "Parcela_Patrocinadora": formatar_moeda_para_exibicao(val_ppa_float),
-                    "Total_acumulado": formatar_moeda_para_exibicao(total_acumulado_calc),
-                    "Regime_de_tributacao": regime_tributacao_t5,
-                    "Recursos_portados": formatar_moeda_para_exibicao(val_rec_port_float),
-                    "debito": formatar_moeda_para_exibicao(val_debito_float),
-                    "total_a_ser_portado": formatar_moeda_para_exibicao(total_a_ser_portado_calc),
-                    "Data_base_portabilidade": data_base_portabilidade_t5
-                }
-                dados_att_port = salvar_dados_completos(pessoa_port, dados_save_port)
-                if dados_att_port:
-                    pdf_p_port, docx_p_port = gerar_documento_portabilidade(dados_att_port)
-                    st.success(f"✅ Dados salvos para {pessoa_port}!")
-                    st.session_state.label_port = f"Docs Portabilidade ({pessoa_port})"
-                    st.session_state.pdf_file_port = pdf_p_port if pdf_p_port and os.path.exists(pdf_p_port) else None
-                    st.session_state.docx_file_port = docx_p_port if docx_p_port and os.path.exists(docx_p_port) else None
-                    if not pdf_p_port and docx_p_port: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
-                    elif not pdf_p_port and not docx_p_port: st.error("Falha ao gerar docs.")
-                else: st.error("Falha ao salvar dados.")
-    else: st.info("Nenhuma pessoa em 'Termo de Portabilidade'.")
-
-    if st.session_state.get('label_port'):
-        st.subheader(st.session_state.label_port)
-        if st.session_state.get('pdf_file_port') and os.path.exists(st.session_state.pdf_file_port):
-            with open(st.session_state.pdf_file_port, "rb") as f:
-                st.download_button("📥 Baixar PDF Portabilidade", f, os.path.basename(st.session_state.pdf_file_port), "application/pdf", key="dl_pdf_port_btn", on_click=lambda: setattr(st.session_state, 'pdf_file_port', None))
-        if st.session_state.get('docx_file_port') and os.path.exists(st.session_state.docx_file_port):
-            with open(st.session_state.docx_file_port, "rb") as f:
-                st.download_button("📥 Baixar DOCX Portabilidade", f, os.path.basename(st.session_state.docx_file_port), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_docx_port_btn", on_click=lambda: setattr(st.session_state, 'docx_file_port', None))
-        if st.session_state.pdf_file_port is None and st.session_state.docx_file_port is None:
-                st.session_state.label_port = ""
-
-with tab6: # CARTA DE PORTABILIDADE ENTRE PLANOS (NOVA ABA)
-    st.header("📧 Carta de Portabilidade entre Planos")
-    df_carta = carregar_dados()
-    fase_df_carta = df_carta[df_carta["Etapa"] == "Carta de Portabilidade"] if "Etapa" in df_carta.columns else pd.DataFrame()
-
-    if 'pdf_file_carta' not in st.session_state: st.session_state.pdf_file_carta = None
-    if 'docx_file_carta' not in st.session_state: st.session_state.docx_file_carta = None
-    if 'label_carta' not in st.session_state: st.session_state.label_carta = ""
-
-    if not fase_df_carta.empty:
-        nomes_carta = fase_df_carta["Nome"].unique()
-        pessoa_carta_key = 'sel_pessoa_carta_tab6'
-        if pessoa_carta_key not in st.session_state or st.session_state[pessoa_carta_key] not in nomes_carta:
-            st.session_state[pessoa_carta_key] = nomes_carta[0]
-        pessoa_carta = st.selectbox("Pessoa:", nomes_carta, key=pessoa_carta_key)
-        dados_pessoa_carta = fase_df_carta[fase_df_carta["Nome"] == pessoa_carta].iloc[0].to_dict()
-
-        with st.form(f"form_carta_{pessoa_carta.replace(' ','_')}"):
-            st.subheader(f"Dados para a Carta de Portabilidade: {pessoa_carta}")
-
-            # Exibir dados já existentes do participante
-            st.markdown("### Dados do Participante (Pré-preenchidos)")
-            st.info(f"Nome: {dados_pessoa_carta.get('Nome', 'N/A')}")
-            # --- CORREÇÃO DO ERRO 'float' object has no attribute 'replace' AQUI ---
-            st.info(f"Endereço: {str(dados_pessoa_carta.get('Complemento', '')).replace('nan', '')} {str(dados_pessoa_carta.get('Rua', 'N/A')).replace('nan', '')}, {str(dados_pessoa_carta.get('Bairro', 'N/A')).replace('nan', '')}")
-            st.info(f"CEP: {str(dados_pessoa_carta.get('CEP', 'N/A')).replace('nan', '')} - {str(dados_pessoa_carta.get('Cidade', 'N/A')).replace('nan', '')} - {str(dados_pessoa_carta.get('UF', 'N/A')).replace('nan', '')}")
-            # --- FIM DA CORREÇÃO ---
-            st.info(f"Plano de Origem: {dados_pessoa_carta.get('Plano', 'N/A')}")
-            st.info(f"N.Ref (Doc): {dados_pessoa_carta.get('NRefDoc', 'N/A')}") # Mostrar N.Ref se for usado
-
-            st.markdown("### Informações Específicas da Transferência (Preencher)")
-            # Campos para input do usuário
-            data_transferencia_t6 = st.text_input("Data de Transferência (dd/mm/aaaa):", value=str(dados_pessoa_carta.get("Data_de_Transferencia_Carta", "")), key=f"data_transf_t6_{pessoa_carta}")
-            banco_t6 = st.text_input("Banco (para o Plano FRGPrev):", value=str(dados_pessoa_carta.get("Banco_Carta", "")), key=f"banco_t6_{pessoa_carta}")
-            agencia_t6 = st.text_input("Agência (do Plano FRGPrev):", value=str(dados_pessoa_carta.get("Agencia_Carta", "")), key=f"agencia_t6_{pessoa_carta}")
-            conta_corrente_t6 = st.text_input("Conta Corrente (do Plano FRGPrev):", value=str(dados_pessoa_carta.get("Conta_Corrente_Carta", "")), key=f"cc_t6_{pessoa_carta}")
-
-            submitted_carta_t6 = st.form_submit_button("💾 Salvar e Gerar Documentos (Carta de Portabilidade)")
-            if submitted_carta_t6:
-                dados_save_carta = {
-                    "Data_de_Transferencia_Carta": data_transferencia_t6,
-                    "Banco_Carta": banco_t6,
-                    "Agencia_Carta": agencia_t6,
-                    "Conta_Corrente_Carta": conta_corrente_t6
-                }
-                # Salvar os dados e obter o dicionário completo e atualizado
-                dados_att_carta = salvar_dados_completos(pessoa_carta, dados_save_carta)
-                
-                if dados_att_carta:
-                    pdf_p_carta, docx_p_carta = gerar_documento_carta_portabilidade(dados_att_carta)
-                    st.success(f"✅ Dados salvos e documentos gerados para {pessoa_carta}!")
-                    st.session_state.label_carta = f"Docs Carta de Portabilidade ({pessoa_carta})"
-                    st.session_state.pdf_file_carta = pdf_p_carta if pdf_p_carta and os.path.exists(pdf_p_carta) else None
-                    st.session_state.docx_file_carta = docx_p_carta if docx_p_carta and os.path.exists(docx_p_carta) else None
-                    if not pdf_p_carta and docx_p_carta: st.warning("PDF não gerado, DOCX disponível. Baixe o DOCX e converta-o localmente.")
-                    elif not pdf_p_carta and not docx_p_carta: st.error("Falha ao gerar documentos.")
-                else:
-                    st.error("Falha ao salvar dados para a Carta de Portabilidade.")
-    else: st.info("Nenhuma pessoa na etapa 'Carta de Portabilidade'.")
-
-    if st.session_state.get('label_carta'):
-        st.subheader(st.session_state.label_carta)
-        if st.session_state.get('pdf_file_carta') and os.path.exists(st.session_state.pdf_file_carta):
-            with open(st.session_state.pdf_file_carta, "rb") as f:
-                st.download_button("📥 Baixar PDF Carta", f, os.path.basename(st.session_state.pdf_file_carta), "application/pdf", key="dl_pdf_carta_btn", on_click=lambda: setattr(st.session_state, 'pdf_file_carta', None))
-        if st.session_state.get('docx_file_carta') and os.path.exists(st.session_state.docx_file_carta):
-            with open(st.session_state.docx_file_carta, "rb") as f:
-                st.download_button("📥 Baixar DOCX Carta", f, os.path.basename(st.session_state.docx_file_carta), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="dl_docx_carta_btn", on_click=lambda: setattr(st.session_state, 'docx_file_carta', None))
-        if st.session_state.pdf_file_carta is None and st.session_state.docx_file_carta is None:
-                st.session_state.label_carta = ""
-
-
-st.sidebar.header("📊 Todos os Dados")
-df_todos_sb = carregar_dados()
-if st.sidebar.checkbox("Mostrar tabela de dados", True, key="cb_dados_sb"):
-    if df_todos_sb.empty: st.sidebar.info("Nenhum dado.")
+    if df_relacao_credito.empty:
+        st.info("Nenhum formulário na etapa 'Relação de Crédito'.")
     else:
-        st.sidebar.dataframe(df_todos_sb)
-        # LINHA CORRIGIDA PARA O ENCODING AQUI
-        csv_sb = df_todos_sb.to_csv(index=False).encode('utf-8-sig')
-        st.sidebar.download_button("⬇️ Baixar CSV", csv_sb, "dados_completos.csv", "text/csv", key="dl_csv_sb_btn")
+        for idx, row in df_relacao_credito.iterrows():
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+                # Formulario para entrada de dados
+                with st.form(f"form_relacao_credito_{row['Nome']}"):
+                    st.write(f"Preenchendo dados para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+
+                    # Dados para Relação de Crédito
+                    creditar = st.text_input("Creditar", value=row.get('Creditar', 'Banco Bradesco'), key=f"cred_{idx}")
+                    banco = st.text_input("Banco (Código)", value=row.get('Banco', ''), key=f"bank_{idx}")
+                    conta = st.text_input("Conta", value=row.get('Conta', ''), key=f"acc_{idx}")
+                    agencia = st.text_input("Agência (Código)", value=row.get('Agencia', ''), key=f"ag_{idx}")
+                    nome_agencia = st.text_input("Nome da Agência", value=row.get('NomeAgencia', ''), key=f"nag_{idx}")
+                    
+                    tipo_entidade = st.text_input("Tipo de Entidade", value=row.get('TipoEntidade', 'Fechada'), key=f"te_{idx}")
+                    patrocinadora = st.text_input("Patrocinadora", value=row.get('Patrocinadora', 'FURNAS'), key=f"pat_{idx}")
+                    plano = st.text_input("Plano", value=row.get('Plano', 'CONTRIBUIÇÃO DEFINIDA - CD'), key=f"plano_{idx}")
+                    
+                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_{idx}")
+                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_{idx}")
+                    data_valor_cota = st.text_input("Data do Valor da Cota (dd/mm/aaaa)", value=row.get('DataValorCota', ''), key=f"data_vc_{idx}")
+
+                    mes_ano_relacao = st.text_input("Mês/Ano da Relação (ex: jun/25)", value=row.get('MesAnoRelacao', datetime.now().strftime("%b/%y").lower()), key=f"mar_{idx}")
+                    data_pagamento = st.text_input("Data de Pagamento (dd/mm/aaaa)", value=row.get('DataPagamento', ''), key=f"dp_{idx}")
+                    
+                    n_ref_doc = st.text_input("Nº Ref. Documento (para Quitação)", value=row.get('NRefDoc', ''), key=f"nref_{idx}")
+
+
+                    col_rua, col_comp = st.columns(2)
+                    rua = col_rua.text_input("Rua", value=row.get('Rua', ''), key=f"rua_{idx}")
+                    complemento = col_comp.text_input("Complemento", value=row.get('Complemento', ''), key=f"comp_{idx}")
+                    
+                    col_bairro, col_cep = st.columns(2)
+                    bairro = col_bairro.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_{idx}")
+                    cep = col_cep.text_input("CEP", value=row.get('CEP', ''), key=f"cep_{idx}")
+                    
+                    col_cidade, col_uf = st.columns(2)
+                    cidade = col_cidade.text_input("Cidade", value=row.get('Cidade', ''), key=f"cidade_{idx}")
+                    uf = col_uf.text_input("UF", value=row.get('UF', ''), key=f"uf_{idx}")
+
+                    mes_calculo_cota_doc = st.text_input("Mês de Cálculo Cota (Doc)", value=row.get('MesCalculoCotaDoc', ''), key=f"mes_calc_cota_doc_{idx}")
+
+                    submitted_relacao = st.form_submit_button("💾 Salvar Dados e Gerar Documento")
+                    if submitted_relacao:
+                        dados_atualizados = {
+                            "Creditar": creditar, "Banco": banco, "Conta": conta, "Agencia": agencia, "NomeAgencia": nome_agencia,
+                            "TipoEntidade": tipo_entidade, "Patrocinadora": patrocinadora, "Plano": plano,
+                            "QtdeCotas": desformatar_string_para_float(qtde_cotas_str), 
+                            "ValorCota": desformatar_string_para_float(valor_cota_str), 
+                            "DataValorCota": data_valor_cota, "MesAnoRelacao": mes_ano_relacao, "DataPagamento": data_pagamento,
+                            "NRefDoc": n_ref_doc,
+                            "Rua": rua, "Complemento": complemento, "Bairro": bairro, "CEP": cep, "Cidade": cidade, "UF": uf,
+                            "MesCalculoCotaDoc": mes_calculo_cota_doc
+                        }
+                        
+                        salvar_dados_completos(row['Nome'], dados_atualizados)
+                        st.success(f"Dados de Relação de Crédito para {row['Nome']} salvos!")
+                        
+                        # Store the generated file path in session state
+                        pdf_path = gerar_pdf_relacao_credito(row.to_dict()) # Passa os dados completos, incluindo os salvos
+                        st.session_state.download_pdf_relacao = pdf_path # Store the path
+                        st.rerun()
+                
+                # Download button outside the form, conditioned on the session state
+                if st.session_state.download_pdf_relacao:
+                    if os.path.exists(st.session_state.download_pdf_relacao):
+                        with open(st.session_state.download_pdf_relacao, "rb") as file:
+                            st.download_button(
+                                label="📥 Download Relação de Crédito PDF",
+                                data=file,
+                                file_name=os.path.basename(st.session_state.download_pdf_relacao),
+                                mime="application/pdf",
+                                key=f"download_btn_relacao_{idx}" # Unique key for each button
+                            )
+                        # Clear the session state after download button is displayed once
+                        # This prevents the button from showing up on subsequent page loads/reruns unless a new file is generated
+                        # Or, you can choose to keep it until the user navigates away or clears it explicitly.
+                        # For this example, we'll keep it simple and just show it once per generation.
+                        # st.session_state.download_pdf_relacao = None 
+                    else:
+                        st.error(f"Arquivo PDF não encontrado em: {st.session_state.download_pdf_relacao}")
+
+with tab4: # Desconto de Quitação de Déficit
+    st.header("📉 Desconto de Quitação de Déficit")
+    df_deficit = carregar_dados()
+    df_deficit_quitacao = df_deficit[df_deficit["Etapa"] == "Desconto de quitação de deficit"]
+
+    if df_deficit_quitacao.empty:
+        st.info("Nenhum formulário na etapa 'Desconto de quitação de deficit'.")
+    else:
+        for idx, row in df_deficit_quitacao.iterrows():
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+                with st.form(f"form_deficit_{row['Nome']}"):
+                    st.write(f"Preenchendo dados de quitação de déficit para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+
+                    # Campos para Déficit
+                    deficit_2014_str = st.text_input("Déficit 2014 (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Deficit2014', '0'))), key=f"def14_{idx}")
+                    deficit_2022_str = st.text_input("Déficit 2022 (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Deficit2022', '0'))), key=f"def22_{idx}")
+                    
+                    n_ref_doc = st.text_input("Nº Ref. Documento", value=row.get('NRefDoc', ''), key=f"nref_q_{idx}")
+                    data_pagamento = st.text_input("Data de Pagamento (dd/mm/aaaa)", value=row.get('DataPagamento', ''), key=f"dp_q_{idx}")
+                    mes_calculo_cota_doc = st.text_input("Mês de Cálculo Cota (Doc)", value=row.get('MesCalculoCotaDoc', ''), key=f"mes_calc_cota_q_doc_{idx}")
+                    
+                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_q_{idx}")
+                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_q_{idx}")
+                    data_valor_cota = st.text_input("Data do Valor da Cota (dd/mm/aaaa)", value=row.get('DataValorCota', ''), key=f"data_vc_q_{idx}")
+
+
+                    submitted_deficit = st.form_submit_button("💾 Salvar Dados e Gerar DOCX (Quitação)")
+                    if submitted_deficit:
+                        dados_atualizados = {
+                            "Deficit2014": desformatar_string_para_float(deficit_2014_str), 
+                            "Deficit2022": desformatar_string_para_float(deficit_2022_str), 
+                            "NRefDoc": n_ref_doc,
+                            "DataPagamento": data_pagamento,
+                            "MesCalculoCotaDoc": mes_calculo_cota_doc,
+                            "QtdeCotas": desformatar_string_para_float(qtde_cotas_str),
+                            "ValorCota": desformatar_string_para_float(valor_cota_str),
+                            "DataValorCota": data_valor_cota
+                        }
+                        dados_completos_apos_salvar = salvar_dados_completos(row['Nome'], dados_atualizados)
+                        st.success(f"Dados de Desconto de Quitação para {row['Nome']} salvos!")
+                        
+                        pdf_path_quit, docx_path_quit = gerar_documento_quitacao(dados_completos_apos_salvar)
+                        st.session_state.download_docx_quitacao = docx_path_quit # Store the path
+                        st.rerun()
+                
+                # Download button outside the form
+                if st.session_state.download_docx_quitacao:
+                    if os.path.exists(st.session_state.download_docx_quitacao):
+                        with open(st.session_state.download_docx_quitacao, "rb") as file:
+                            st.download_button(
+                                label="📥 Download Quitação DOCX",
+                                data=file,
+                                file_name=os.path.basename(st.session_state.download_docx_quitacao),
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"download_btn_quitacao_{idx}"
+                            )
+                    else:
+                        st.error(f"Arquivo DOCX não encontrado em: {st.session_state.download_docx_quitacao}")
+
+
+with tab5: # Termo de Portabilidade
+    st.header("📄 Termo de Portabilidade")
+    df_portabilidade = carregar_dados()
+    df_termo_portabilidade = df_portabilidade[df_portabilidade["Etapa"] == "Termo de Portabilidade"]
+
+    if df_termo_portabilidade.empty:
+        st.info("Nenhum formulário na etapa 'Termo de Portabilidade'.")
+    else:
+        for idx, row in df_termo_portabilidade.iterrows():
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+                with st.form(f"form_termo_portabilidade_{row['Nome']}"):
+                    st.write(f"Preenchendo dados para Termo de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+
+                    # Dados do Participante (podem ser pré-preenchidos do formulário inicial)
+                    st.subheader("Dados do Participante (revisar)")
+                    st.text_input("Nome", value=row.get('Nome', ''), disabled=True)
+                    st.text_input("CPF", value=row.get('CPF', ''), disabled=True)
+                    st.text_input("Matrícula", value=formatar_matricula(row.get('Matricula', '')), disabled=True) # FORMATAR MATRICULA
+                    st.text_input("Rua", value=row.get('Rua', ''), key=f"rua_port_{idx}")
+                    st.text_input("Complemento", value=row.get('Complemento', '').replace('nan', ''), key=f"comp_port_{idx}")
+                    st.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_port_{idx}")
+                    st.text_input("CEP", value=row.get('CEP', ''), key=f"cep_port_{idx}")
+                    st.text_input("Cidade", value=row.get('Cidade', ''), key=f"cidade_port_{idx}")
+                    st.text_input("UF", value=row.get('UF', ''), key=f"uf_port_{idx}")
+
+                    st.subheader("Dados de Admissão/Desligamento/Inscrição")
+                    data_admissao = st.text_input("Data de Admissão (dd/mm/aaaa)", value=row.get('Data_admissao', ''), key=f"data_adm_{idx}")
+                    data_desligamento = st.text_input("Data de Desligamento (dd/mm/aaaa)", value=row.get('Data_desligamento', ''), key=f"data_desl_{idx}")
+                    data_inscricao = st.text_input("Data de Inscrição no Plano (dd/mm/aaaa)", value=row.get('Data_inscricao', ''), key=f"data_insc_{idx}")
+
+                    st.subheader("Dados do Plano de Benefício e Receptor")
+                    plano_de_beneficio = st.text_input("Plano de Benefício (Origem)", value=row.get('plano_de_beneficio', ''), key=f"plano_ben_{idx}")
+                    cnpb = st.text_input("CNPB (Plano Origem)", value=row.get('CNPB', ''), key=f"cnpb_{idx}")
+                    plano_receptor = st.text_input("Plano Receptor (Destino)", value=row.get('plano_receptor', ''), key=f"plano_rec_{idx}")
+                    cnpj_plano_receptor = st.text_input("CNPJ do Plano Receptor", value=row.get('cnpj_plano_receptor', ''), key=f"cnpj_rec_{idx}")
+                    endereco_plano_receptor = st.text_input("Endereço do Plano Receptor", value=row.get('endereco_plano_receptor', ''), key=f"end_rec_{idx}")
+                    cep_plano_receptor = st.text_input("CEP do Plano Receptor", value=row.get('cep_plano_receptor', ''), key=f"cep_rec_{idx}")
+                    cidade_plano_receptor = st.text_input("Cidade do Plano Receptor", value=row.get('cidade_plano_receptor', ''), key=f"cidade_rec_{idx}")
+                    contato_plano_receptor = st.text_input("Contato do Plano Receptor", value=row.get('contato_plano_receptor', ''), key=f"cont_rec_{idx}")
+                    telefone_plano_receptor = st.text_input("Telefone do Plano Receptor", value=row.get('telefone_plano_receptor', ''), key=f"tel_rec_{idx}")
+                    email_plano_receptor = st.text_input("Email do Plano Receptor", value=row.get('email_plano_receptor', ''), key=f"email_rec_{idx}")
+                    banco_plano_receptor = st.text_input("Banco do Plano Receptor", value=row.get('banco_plano_receptor', ''), key=f"banco_rec_{idx}")
+                    agencia_plano_receptor = st.text_input("Agência do Plano Receptor", value=row.get('agencia_plano_receptor', ''), key=f"ag_rec_{idx}")
+                    conta_plano_receptor = st.text_input("Conta do Plano Receptor", value=row.get('conta_plano_receptor', ''), key=f"conta_rec_{idx}")
+
+                    st.subheader("Valores e Tributação")
+                    parcela_participante_str = st.text_input("Parcela do Participante (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Parcela_Participante', '0'))), key=f"par_part_{idx}")
+                    parcela_patrocinadora_str = st.text_input("Parcela da Patrocinadora (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Parcela_Patrocinadora', '0'))), key=f"par_pat_{idx}")
+                    regime_tributacao = st.selectbox("Regime de Tributação", ["Regressivo", "Progressivo", "Não Definido"], index=["Regressivo", "Progressivo", "Não Definido"].index(row.get('Regime_de_tributacao', 'Não Definido')) if row.get('Regime_de_tributacao', 'Não Definido') in ["Regressivo", "Progressivo", "Não Definido"] else 2, key=f"reg_trib_{idx}")
+                    recursos_portados_str = st.text_input("Recursos a serem portados (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Recursos_portados', '0'))), key=f"rec_port_{idx}")
+                    debito_str = st.text_input("Débito (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('debito', '0'))), key=f"debito_port_{idx}")
+                    data_base_portabilidade = st.text_input("Data Base Portabilidade (dd/mm/aaaa)", value=row.get('Data_base_portabilidade', ''), key=f"data_base_port_{idx}")
+
+                    submitted_termo_port = st.form_submit_button("💾 Salvar Dados e Gerar DOCX (Termo de Portabilidade)")
+                    if submitted_termo_port:
+                        dados_atualizados = {
+                            "Rua": st.session_state[f"rua_port_{idx}"], "Complemento": st.session_state[f"comp_port_{idx}"],
+                            "Bairro": st.session_state[f"bairro_port_{idx}"], "CEP": st.session_state[f"cep_port_{idx}"],
+                            "Cidade": st.session_state[f"cidade_port_{idx}"], "UF": st.session_state[f"uf_port_{idx}"],
+                            "Data_admissao": data_admissao, "Data_desligamento": data_desligamento, "Data_inscricao": data_inscricao,
+                            "plano_de_beneficio": plano_de_beneficio, "CNPB": cnpb, "plano_receptor": plano_receptor, "cnpj_plano_receptor": cnpj_plano_receptor,
+                            "endereco_plano_receptor": endereco_plano_receptor, "cep_plano_receptor": cep_plano_receptor, "cidade_plano_receptor": cidade_plano_receptor,
+                            "contato_plano_receptor": contato_plano_receptor, "telefone_plano_receptor": telefone_plano_receptor, "email_plano_receptor": email_plano_receptor,
+                            "banco_plano_receptor": banco_plano_receptor, "agencia_plano_receptor": agencia_plano_receptor, "conta_plano_receptor": conta_plano_receptor,
+                            "Parcela_Participante": desformatar_string_para_float(parcela_participante_str),
+                            "Parcela_Patrocinadora": desformatar_string_para_float(parcela_patrocinadora_str),
+                            "Regime_de_tributacao": regime_tributacao,
+                            "Recursos_portados": desformatar_string_para_float(recursos_portados_str),
+                            "debito": desformatar_string_para_float(debito_str),
+                            "Data_base_portabilidade": data_base_portabilidade
+                        }
+                        dados_completos_apos_salvar = salvar_dados_completos(row['Nome'], dados_atualizados)
+                        st.success(f"Dados de Termo de Portabilidade para {row['Nome']} salvos!")
+
+                        pdf_path_port, docx_path_port = gerar_documento_portabilidade(dados_completos_apos_salvar)
+                        st.session_state.download_docx_portabilidade = docx_path_port # Store the path
+                        st.rerun()
+
+                # Download button outside the form
+                if st.session_state.download_docx_portabilidade:
+                    if os.path.exists(st.session_state.download_docx_portabilidade):
+                        with open(st.session_state.download_docx_portabilidade, "rb") as file:
+                            st.download_button(
+                                label="📥 Download Termo de Portabilidade DOCX",
+                                data=file,
+                                file_name=os.path.basename(st.session_state.download_docx_portabilidade),
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"download_btn_termo_port_{idx}"
+                            )
+                    else:
+                        st.error(f"Arquivo DOCX não encontrado em: {st.session_state.download_docx_portabilidade}")
+
+with tab6: # Carta de Portabilidade
+    st.header("📧 Carta de Portabilidade")
+    df_carta_portabilidade = carregar_dados()
+    df_carta = df_carta_portabilidade[df_carta_portabilidade["Etapa"] == "Carta de Portabilidade"]
+
+    if df_carta.empty:
+        st.info("Nenhum formulário na etapa 'Carta de Portabilidade'.")
+    else:
+        for idx, row in df_carta.iterrows():
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+                with st.form(f"form_carta_portabilidade_{row['Nome']}"):
+                    st.write(f"Preenchendo dados para Carta de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+
+                    # Campos específicos para a Carta de Portabilidade
+                    data_transferencia_carta = st.text_input("Data de Transferência (dd/mm/aaaa)", value=row.get('Data_de_Transferencia_Carta', ''), key=f"data_transf_c_{idx}")
+                    banco_carta = st.text_input("Banco (para carta)", value=row.get('Banco_Carta', ''), key=f"banco_c_{idx}")
+                    agencia_carta = st.text_input("Agência (para carta)", value=row.get('Agencia_Carta', ''), key=f"ag_c_{idx}")
+                    conta_corrente_carta = st.text_input("Conta Corrente (para carta)", value=row.get('Conta_Corrente_Carta', ''), key=f"cc_c_{idx}")
+                    
+                    st.subheader("Dados do Participante (revisar para a Carta)")
+                    st.text_input("Nome do Participante", value=row.get('Nome', ''), disabled=True)
+                    st.text_input("CPF do Participante", value=row.get('CPF', ''), disabled=True)
+                    st.text_input("Matrícula do Participante", value=formatar_matricula(row.get('Matricula', '')), disabled=True) # FORMATAR MATRICULA
+                    st.text_input("Plano Original", value=row.get('Plano', ''), disabled=True)
+                    
+                    st.text_input("Rua", value=row.get('Rua', ''), key=f"rua_carta_{idx}")
+                    st.text_input("Complemento", value=row.get('Complemento', '').replace('nan', ''), key=f"comp_carta_{idx}")
+                    st.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_carta_{idx}")
+                    st.text_input("CEP", value=row.get('CEP', ''), key=f"cep_carta_{idx}")
+                    st.text_input("Cidade", value=row.get('Cidade', ''), key=f"cidade_carta_{idx}")
+                    st.text_input("UF", value=row.get('UF', ''), key=f"uf_carta_{idx}")
+                    st.text_input("Nº Ref. Documento", value=row.get('NRefDoc', ''), key=f"nref_carta_{idx}")
+
+                    submitted_carta_port = st.form_submit_button("💾 Salvar Dados e Gerar DOCX (Carta de Portabilidade)")
+                    if submitted_carta_port:
+                        dados_atualizados = {
+                            "Data_de_Transferencia_Carta": data_transferencia_carta,
+                            "Banco_Carta": banco_carta,
+                            "Agencia_Carta": agencia_carta,
+                            "Conta_Corrente_Carta": conta_corrente_carta,
+                            "Rua": st.session_state[f"rua_carta_{idx}"], "Complemento": st.session_state[f"comp_carta_{idx}"],
+                            "Bairro": st.session_state[f"bairro_carta_{idx}"], "CEP": st.session_state[f"cep_carta_{idx}"],
+                            "Cidade": st.session_state[f"cidade_carta_{idx}"], "UF": st.session_state[f"uf_carta_{idx}"],
+                            "NRefDoc": st.session_state[f"nref_carta_{idx}"]
+                        }
+                        dados_completos_apos_salvar = salvar_dados_completos(row['Nome'], dados_atualizados)
+                        st.success(f"Dados de Carta de Portabilidade para {row['Nome']} salvos!")
+                        
+                        pdf_path_carta, docx_path_carta = gerar_documento_carta_portabilidade(dados_completos_apos_salvar)
+                        st.session_state.download_docx_carta = docx_path_carta # Store the path
+                        st.rerun()
+                
+                # Download button outside the form
+                if st.session_state.download_docx_carta:
+                    if os.path.exists(st.session_state.download_docx_carta):
+                        with open(st.session_state.download_docx_carta, "rb") as file:
+                            st.download_button(
+                                label="📥 Download Carta de Portabilidade DOCX",
+                                data=file,
+                                file_name=os.path.basename(st.session_state.download_docx_carta),
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"download_btn_carta_{idx}"
+                            )
+                    else:
+                        st.error(f"Arquivo DOCX não encontrado em: {st.session_state.download_docx_carta}")

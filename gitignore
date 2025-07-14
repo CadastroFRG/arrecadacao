@@ -1,0 +1,5 @@
+# Ignorar tudo dentro de venv
+venv/
+
+# Mas permitir arquivos essenciais para o ambiente funcionar
+

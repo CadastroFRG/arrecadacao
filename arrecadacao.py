@@ -26,7 +26,7 @@ DATA_PATH = "dados_formulario.csv"
 EMAIL_REMETENTE = "brunomelo@frg.com.br" # ATUALIZE COM SEU E-MAIL
 EMAIL_SENHA = "Trocar@123" # ATUALIZE COM SUA SENHA DE APP DO GMAIL
 # --- ETAPAS ATUALIZADAS ---
-ETAPAS = ["Aguardando Resposta", "Respondido", "Relação de Crédito", "Desconto de quitação de deficit", "Termo de Portabilidade", "Carta de Portabilidade"]
+ETAPAS = ["Aguardando Resposta", "Respondido", "Relação de Crédito", "Desconto de quitação de deficit", "Termo de Portabilidade", "Carta de Portabilidade", "Processo Concluído"]
 WORD_TEMPLATE_PATH = "template_quitacao.docx"
 WORD_TEMPLATE_PORT_PATH = "template_termo_de_portabilidade.docx"
 # --- NOVO TEMPLATE ---
@@ -54,30 +54,75 @@ def carregar_dados():
         # --- NOVA COLUNA PARA NUMERO DE RELACAO ---
         "NRelacao" 
     ]
+    
+    dtype_map = {
+        "Nome": str, "Matricula": str, "CPF": str, "Email": str, "Comentário": str, "Área": str, "Etapa": str,
+        "Dados Adicionais": str, "Creditar": str, "Banco": str, "Conta": str, "Agencia": str, "NomeAgencia": str,
+        "DataValorCota": str, "MesAnoRelacao": str, "DataPagamento": str, "NRefDoc": str,
+        "Rua": str, "Complemento": str, "Bairro": str, "CEP": str, "Cidade": str, "UF": str,
+        "MesCalculoCotaDoc": str, 
+        
+        "ValorRS": object, 
+        "QtdeCotas": object, 
+        "ValorCota": object, 
+        "Deficit2014": object, 
+        "Deficit2022": object, 
+        "Parcela_Participante": object, 
+        "Parcela_Patrocinadora": object, 
+        "Total_acumulado": object, 
+        "Recursos_portados": object, 
+        "debito": object, 
+        "total_a_ser_portado": object, 
+        "NRelacao": object, 
+
+        "Data_admissao": str, "Data_desligamento": str, "Data_inscricao": str,
+        "plano_de_beneficio": str, "CNPB": str, "plano_receptor": str, "cnpj_plano_receptor": str,
+        "endereco_plano_receptor": str, "cep_plano_receptor": str, "cidade_plano_receptor": str,
+        "contato_plano_receptor": str, "telefone_plano_receptor": str, "email_plano_receptor": str,
+        "banco_plano_receptor": str, "agencia_plano_receptor": str, "conta_plano_receptor": str,
+        "Regime_de_tributacao": str,
+        "Data_base_portabilidade": str,
+        "Data_de_Transferencia_Carta": str, "Banco_Carta": str, "Agencia_Carta": str, "Conta_Corrente_Carta": str
+    }
+
     if os.path.exists(DATA_PATH):
         try:
-            df = pd.read_csv(DATA_PATH)
+            df = pd.read_csv(DATA_PATH, dtype=dtype_map)
+            
             for col in colunas_necessarias:
                 if col not in df.columns:
-                    df[col] = pd.NA
+                    df[col] = pd.Series(dtype=dtype_map.get(col, object))
             return df
         except pd.errors.EmptyDataError:
-            return pd.DataFrame(columns=colunas_necessarias)
+            return pd.DataFrame(columns=colunas_necessarias).astype(dtype_map)
         except Exception as e:
             st.error(f"Erro ao carregar o arquivo CSV: {e}")
-            return pd.DataFrame(columns=colunas_necessarias)
+            return pd.DataFrame(columns=colunas_necessarias).astype(dtype_map)
     else:
-        return pd.DataFrame(columns=colunas_necessarias)
+        return pd.DataFrame(columns=colunas_necessarias).astype(dtype_map)
 
 def salvar_dados(novo_dado):
     df = carregar_dados()
     novo_dado_df = pd.DataFrame([novo_dado])
+    
     for col in df.columns:
         if col not in novo_dado_df.columns:
             novo_dado_df[col] = pd.NA
-    novo_dado_df = novo_dado_df[df.columns]
-    df = pd.concat([df, novo_dado_df], ignore_index=True)
+    
+    for col, dtype in df.dtypes.items():
+        if col in novo_dado_df.columns and novo_dado_df[col].dtype != dtype:
+            try:
+                if pd.api.types.is_numeric_dtype(dtype):
+                    novo_dado_df[col] = pd.to_numeric(novo_dado_df[col], errors='coerce').astype(dtype)
+                else: 
+                    novo_dado_df[col] = novo_dado_df[col].astype(dtype)
+            except Exception as e:
+                st.warning(f"Não foi possível converter a coluna '{col}' para o tipo '{dtype}' ao salvar novos dados: {e}")
+                novo_dado_df[col] = pd.NA
+
+    df = pd.concat([df, novo_dado_df[df.columns]], ignore_index=True)
     df.to_csv(DATA_PATH, index=False)
+
 
 def atualizar_etapa(nome, nova_etapa):
     df = carregar_dados()
@@ -90,49 +135,53 @@ def salvar_dados_completos(nome, dados_dict):
     if not df.empty and "Nome" in df.columns:
         idx_list = df[df["Nome"] == nome].index
         if not idx_list.empty:
-            idx = idx_list[0] # Pega o primeiro índice se houver múltiplos (não deveria)
+            idx = idx_list[0]
             for chave, valor in dados_dict.items():
                 if chave in df.columns:
-                    df.loc[idx, chave] = valor
+                    target_dtype = df[chave].dtype
+                    try:
+                        if pd.api.types.is_numeric_dtype(target_dtype):
+                            df.loc[idx, chave] = pd.to_numeric(valor, errors='coerce').astype(target_dtype)
+                        else:
+                            df.loc[idx, chave] = str(valor)
+                    except Exception as e:
+                        st.warning(f"Não foi possível converter a coluna '{chave}' para o tipo '{target_dtype}' ao salvar dados completos: {e}")
+                        df.loc[idx, chave] = pd.NA
                 else:
                     st.warning(f"Tentativa de salvar coluna inexistente: {chave}")
             df.to_csv(DATA_PATH, index=False)
             return df.loc[idx].to_dict()
     return {}
 
-# ATUALIZADO: E-mails para áreas podem ser lista
 EMAILS_POR_AREA = {
-    "RH": ["rh@empresa.com"], # Exemplo, adicione mais se necessário
-    "Financeiro": ["financeiro@empresa.com", "financeiro.gerencia@empresa.com"], # Exemplo de múltiplos
-    "Seguridade": ["seguridade@empresa.com"]
+    "RH": ["rh@empresa.com.br", "gerente.rh@empresa.com.br"],
+    "Financeiro": ["financeiro@empresa.com.br", "financeiro.gerencia@empresa.com.br"],
+    "Seguridade": ["seguridade@empresa.com.br", "equipe.seguridade@empresa.com.br"],
+    "Outra": ["contato.geral@empresa.com.br"]
 }
 
-def enviar_email(email_pessoal, nome, area):
+def enviar_email(email_pessoal, nome, destinatarios_internos_selecionados):
     try:
         yag = yagmail.SMTP(EMAIL_REMETENTE, EMAIL_SENHA)
 
-        # 1. Envia e-mail para o participante
         assunto_participante = f"Confirmação de Recebimento - Formulário FRG - {nome}"
         conteudo_participante = f"Olá {nome},\n\nRecebemos seu formulário com sucesso. Em breve, entraremos em contato ou daremos prosseguimento à sua solicitação.\n\nObrigado,\nEquipe FRG"
         yag.send(to=email_pessoal, subject=assunto_participante, contents=conteudo_participante)
-        st.info(f"E-mail de confirmação enviado para {email_pessoal}.")
+        st.info(f"E-mail de confirmação enviado para **{email_pessoal}**.")
 
-        # 2. Envia e-mail(s) para a(s) área(s)
-        destinatarios_area = EMAILS_POR_AREA.get(area, [])
-        if not destinatarios_area:
-            st.warning(f"⚠️ Nenhum e-mail configurado para a área: {area}. E-mail de notificação não enviado.")
+        if not destinatarios_internos_selecionados:
+            st.warning(f"⚠️ Nenhum e-mail selecionado para notificação interna. E-mail de notificação não enviado.")
             return
         
-        assunto_area = f"Novo cadastro aguardando resposta - {nome}"
-        conteudo_area = f"Olá equipe de {area},\n\nUm novo formulário foi preenchido por {nome} ({email_pessoal}).\n\nPor favor, acesse o sistema.\n\nAtt,\nSistema Streamlit"
+        assunto_interno = f"Novo cadastro aguardando resposta - {nome}"
+        conteudo_interno = f"Olá,\n\nUm novo formulário foi preenchido por **{nome}** ({email_pessoal}).\n\nPor favor, acesse o sistema para mais detalhes.\n\nAtt,\nSistema Streamlit"
         
-        yag.send(to=destinatarios_area, subject=assunto_area, contents=conteudo_area)
-        st.info(f"E-mail de notificação enviado para as áreas: {', '.join(destinatarios_area)}.")
+        yag.send(to=destinatarios_internos_selecionados, subject=assunto_interno, contents=conteudo_interno)
+        st.info(f"E-mail de notificação interna enviado para: **{', '.join(destinatarios_internos_selecionados)}**.")
 
     except Exception as e:
-        st.error(f"❌ Erro ao enviar e-mail: {e}.")
+        st.error(f"❌ Erro ao enviar e-mail: {e}. Verifique as credenciais e as configurações do servidor SMTP.")
 
-# NOVO: Função para obter o próximo número de relação
 def obter_proximo_n_relacao():
     df = carregar_dados()
     if 'NRelacao' in df.columns and pd.to_numeric(df['NRelacao'], errors='coerce').notna().any():
@@ -140,9 +189,8 @@ def obter_proximo_n_relacao():
         if pd.isna(ultimo_n): 
             return 1
         return int(ultimo_n) + 1
-    return 1 # Começa em 1 se não houver dados ou coluna
+    return 1
 
-# NOVO: Função para formatar a matrícula
 def formatar_matricula(matricula):
     matricula = str(matricula).strip()
     if not matricula:
@@ -152,17 +200,138 @@ def formatar_matricula(matricula):
         return f"{apenas_digitos[:-1]}-{apenas_digitos[-1]}"
     return apenas_digitos
 
-# NOVO: Função para formatar a conta (se precisar de um padrão específico)
 def formatar_conta(numero_conta):
     numero_conta = str(numero_conta).strip()
     if not numero_conta:
         return ""
-    # Remove qualquer coisa que não seja dígito
     apenas_digitos = re.sub(r'\D', '', numero_conta)
-    # Exemplo simples: se o último é o dígito, adiciona traço
-    if len(apenas_digitos) > 1 and len(apenas_digitos) <= 12: # Limite arbitrário para evitar formatar algo grande
+    if len(apenas_digitos) > 1 and len(apenas_digitos) <= 12:
         return f"{apenas_digitos[:-1]}-{apenas_digitos[-1]}"
-    return apenas_digitos # Retorna sem formatar se for muito curto ou já tiver traço, etc.
+    return apenas_digitos
+
+def formatar_numero_para_exibicao(valor_numerico, casas_decimais=2):
+    # # DEPURACAO: # st.write(f"formatar_numero_para_exibicao: Recebido '{valor_numerico}' (tipo: {type(valor_numerico)})")
+    try:
+        valor_float = float(valor_numerico)
+        # # DEPURACAO: # st.write(f"formatar_numero_para_exibicao: Convertido para float: {valor_float}")
+        
+        formatted_str_us = f"{valor_float:,.{casas_decimais}f}"
+        # # DEPURACAO: # st.write(f"formatar_numero_para_exibicao: Formatado US: '{formatted_str_us}'")
+        
+        final_str = formatted_str_us.replace(",", "X").replace(".", ",").replace("X", ".")
+        # # DEPURACAO: # st.write(f"formatar_numero_para_exibicao: Formatado BR Final: '{final_str}'")
+        return final_str
+    except (ValueError, TypeError) as e:
+        # # DEPURACAO: # st.write(f"formatar_numero_para_exibicao: Erro de formatação para '{valor_numerico}': {e}")
+        return "0,00"
+
+def formatar_moeda_para_exibicao(valor_numerico):
+    # # DEPURACAO: # st.write(f"formatar_moeda_para_exibicao: Recebido '{valor_numerico}' (tipo: {type(valor_numerico)})")
+    try:
+        float_val = float(valor_numerico)
+        # # DEPURACAO: # st.write(f"formatar_moeda_para_exibicao: Convertido para float: {float_val}")
+        return locale.currency(float_val, grouping=True, symbol=None)
+    except (ValueError, TypeError) as e:
+        # # DEPURACAO: # st.write(f"formatar_moeda_para_exibicao: Erro de formatação para '{valor_numerico}': {e}")
+        return "0,00"
+
+# --- CRÍTICA: FUNÇÃO desformatar_string_para_float AJUSTADA ---
+def desformatar_string_para_float(valor_str):
+    # # DEPURACAO: # st.write(f"desformatar_string_para_float: Recebido para desformatação: '{valor_str}' (tipo: {type(valor_str)})")
+    if valor_str is None or str(valor_str).strip() == "" or str(valor_str).lower() == 'nan':
+        # # DEPURACAO: # st.write(f"desformatar_string_para_float: Retornando 0.0 para vazio/nan.")
+        return 0.0
+    
+    s_val = str(valor_str).strip()
+
+    # Heurística para detectar o formato.
+    # Priorizamos o formato BR com vírgula como separador decimal.
+    # Se contém vírgula E (não contém ponto OU o ponto está antes da vírgula),
+    # assume-se formato BR. Ex: "1.234,56" ou "123,45"
+    if ',' in s_val and ('.' not in s_val or s_val.rfind(',') > s_val.rfind('.')):
+        # Formato BR: remove pontos de milhar e substitui vírgula decimal por ponto.
+        clean_str = s_val.replace('.', '').replace(',', '.')
+        # # DEPURACAO: # st.write(f"desformatar_string_para_float: Detectado BR, clean_str: '{clean_str}'")
+    else:
+        # Assumir formato US (vírgula como milhar, ponto como decimal) ou número puro.
+        # Remove apenas vírgulas (separador de milhar US).
+        # Ex: "1,234.56" -> "1234.56"
+        # Ex: "50" -> "50"
+        # Ex: "50.0" -> "50.0" (aqui o ponto é decimal e deve permanecer)
+        clean_str = s_val.replace(',', '')
+        # # DEPURACAO: # st.write(f"desformatar_string_para_float: Detectado US/Puro, clean_str: '{clean_str}'")
+
+    try:
+        float_val = float(clean_str)
+        # # DEPURACAO: # st.write(f"desformatar_string_para_float: Converteu para float: {float_val}")
+        return float_val
+    except ValueError:
+        st.warning(f"Não foi possível converter '{valor_str}' para número após desformatação. Usando 0.0.")
+        return 0.0
+
+# --- FUNÇÃO PARA SUBSTITUIÇÃO MAIS ROBUSTA (AGORA NO LUGAR CERTO) ---
+def replace_placeholders_in_document(doc, substitutions):
+    """
+    Substitui placeholders em parágrafos e células de tabelas do documento DOCX.
+    Esta função tenta ser mais robusta para placeholders que podem estar divididos em runs,
+    e tenta preservar o estilo da primeira run.
+    """
+    def process_paragraph_runs(p, key, value):
+        full_text = "".join([run.text for run in p.runs])
+        if key in full_text:
+            new_full_text = full_text.replace(key, value)
+            
+            if p.runs:
+                first_run_style = p.runs[0].style
+                first_run_font = p.runs[0].font
+                
+                for run in list(p.runs): 
+                    p.runs[0]._element.getparent().remove(run._element) 
+                
+                new_run = p.add_run(new_full_text)
+                new_run.style = first_run_style
+                new_run.font.name = first_run_font.name
+                new_run.font.size = first_run_font.size
+                new_run.font.bold = first_run_font.bold
+                new_run.font.italic = first_run_font.italic
+                new_run.font.underline = first_run_font.underline
+            else:
+                p.add_run(new_full_text)
+
+    for p in doc.paragraphs:
+        for key, value in substitutions.items():
+            process_paragraph_runs(p, key, value)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for key, value in substitutions.items():
+                        process_paragraph_runs(p, key, value)
+    
+    for section in doc.sections:
+        if section.header:
+            for p in section.header.paragraphs:
+                for key, value in substitutions.items():
+                    process_paragraph_runs(p, key, value)
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            for key, value in substitutions.items():
+                                process_paragraph_runs(p, key, value)
+
+        if section.footer:
+            for p in section.footer.paragraphs:
+                for key, value in substitutions.items():
+                    process_paragraph_runs(p, key, value)
+            for table in section.footer.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            for key, value in substitutions.items():
+                                process_paragraph_runs(p, key, value)
+
 
 def gerar_pdf_relacao_credito(dados):
     pdf = FPDF()
@@ -171,7 +340,6 @@ def gerar_pdf_relacao_credito(dados):
     pdf.set_font("Arial", 'B', size=12)
     pdf.cell(0, 10, "REAL GRANDEZA", ln=True, align='C')
     pdf.set_font("Arial", 'B', size=10)
-    # AJUSTE: Espaço e acento em Previdência e Assistência
     pdf.cell(0, 5, "FUNDAÇÃO DE PREVIDÊNCIA E ASSISTÊNCIA SOCIAL", ln=True, align='C')
     pdf.ln(5)
 
@@ -179,20 +347,17 @@ def gerar_pdf_relacao_credito(dados):
     current_y_for_relation = pdf.get_y()
     pdf.set_font("Arial", size=10)
 
-    # AJUSTE: Obter NRelacao dinamicamente
     numero_relacao = dados.get('NRelacao', obter_proximo_n_relacao()) 
     pdf.set_xy(150, current_y_for_relation)
     pdf.multi_cell(50, 5, f"Relação nº {numero_relacao}\n{mes_ano_relacao}", align='R')
     
     pdf.set_xy(10, current_y_for_relation + 5)
-    # AJUSTE: Gerência GBP
     pdf.cell(0, 5, f"GBP/AMX {mes_ano_relacao}", ln=False) 
     pdf.set_y(current_y_for_relation + 10)
     pdf.ln(5)
 
     pdf.set_font("Arial", '', size=10)
     pdf.cell(0, 7, "DIRETORIA DE SEGURIDADE - DS", ln=True)
-    # AJUSTE: Alterar gerência de GEA para GBP
     pdf.cell(0, 7, "GERÊNCIA DE BENEFÍCIOS E PAGAMENTOS - GBP", ln=True) 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', size=12)
@@ -206,7 +371,7 @@ def gerar_pdf_relacao_credito(dados):
     pdf.cell(25, 7, "Cód. do Banco:")
     pdf.set_font("Arial", 'B', size=10)
     pdf.cell(0, 7, str(dados.get('Banco', '')), ln=True)
-    pdf.set_x(x_before_cod_banco -20) # Deve ser a mesma X da célula "Creditar:"
+    pdf.set_x(x_before_cod_banco -20)
     pdf.set_font("Arial", 'B', size=10)
     pdf.cell(0, 7, str(dados.get('Creditar', 'Banco Bradesco')), ln=True)
     
@@ -215,137 +380,43 @@ def gerar_pdf_relacao_credito(dados):
     pdf.set_font("Arial", 'B', size=10)
     pdf.cell(0, 7, "Real Grandeza", ln=True)
     
-    # AJUSTE: Resolver dados sobrepostos - Cada item em uma nova linha
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 7, f"Conta: {formatar_conta(dados.get('Conta', ''))}", ln=True) # FORMATAR CONTA
+    pdf.cell(0, 7, f"Conta: {formatar_conta(dados.get('Conta', ''))}", ln=True)
     pdf.cell(0, 7, f"Cód. Agência: {dados.get('Agencia', '')}", ln=True)
     pdf.cell(0, 7, f"Nome da Agência: {dados.get('NomeAgencia', '')}", ln=True)
     
-    # AJUSTE: Calcular ValorRS automaticamente
     qtde_cotas_val = desformatar_string_para_float(dados.get('QtdeCotas', '0'))
     valor_cota_val = desformatar_string_para_float(dados.get('ValorCota', '0'))
     valor_total_rs_calculado = qtde_cotas_val * valor_cota_val
 
+
     pdf.set_font("Arial", 'B', size=10)
-    pdf.cell(0, 7, f"Valor em R$: {formatar_moeda_para_exibicao(valor_total_rs_calculado)}", ln=True) # Usar valor calculado
+    pdf.cell(0, 7, f"Valor em R$: {formatar_moeda_para_exibicao(valor_total_rs_calculado)}", ln=True)
     pdf.set_font("Arial", size=10)
     
     pdf.cell(35, 7, "Tipo de Entidade:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('TipoEntidade', 'Fechada')), ln=True); pdf.set_font("Arial", size=10)
     pdf.cell(35, 7, "PATROCINADORA:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Patrocinadora', 'FURNAS')), ln=True); pdf.set_font("Arial", size=10)
     pdf.cell(35, 7, "PLANO:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Plano', 'CONTRIBUIÇÃO DEFINIDA - CD')), ln=True); pdf.set_font("Arial", size=10)
     
-    pdf.cell(150, 7, "Total", align='R'); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(valor_total_rs_calculado), ln=True); pdf.set_font("Arial", size=10) # Usar valor calculado
+    pdf.cell(150, 7, "Total", align='R'); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(valor_total_rs_calculado), ln=True); pdf.set_font("Arial", size=10)
     pdf.ln(3)
     pdf.cell(0, 7, f"Para pagamento dia: {dados.get('DataPagamento', '03/jun/2025')}", ln=True)
     pdf.ln(7)
     pdf.set_font("Arial", 'B', size=11); pdf.cell(0, 7, "Identificação do Participante", ln=True, align='C'); pdf.set_font("Arial", size=10)
     pdf.cell(20, 7, "Nome:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('Nome', '')), ln=True); pdf.set_font("Arial", size=10)
-    pdf.cell(20, 7, "Matrícula:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_matricula(dados.get('Matricula', '')), ln=True); pdf.set_font("Arial", size=10) # FORMATAR MATRICULA
+    pdf.cell(20, 7, "Matrícula:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_matricula(dados.get('Matricula', '')), ln=True); pdf.set_font("Arial", size=10)
     pdf.cell(20, 7, "C.P.F.:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, str(dados.get('CPF', '')), ln=True); pdf.set_font("Arial", size=10)
-    pdf.cell(30, 7, "Qtde. de Cotas:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(qtde_cotas_val), ln=True); pdf.set_font("Arial", size=10) # FORMATAR VALOR
+    
+    pdf.cell(30, 7, "Qtde. de Cotas:"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_numero_para_exibicao(qtde_cotas_val, casas_decimais=2), ln=True); pdf.set_font("Arial", size=10)
     data_valor_cota_pdf = dados.get('DataValorCota', '30/04/2025')
-    pdf.cell(55, 7, f"Valor da Cota ({data_valor_cota_pdf}):"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_moeda_para_exibicao(valor_cota_val), ln=True); pdf.set_font("Arial", size=10) # FORMATAR VALOR
+    pdf.cell(55, 7, f"Valor da Cota ({data_valor_cota_pdf}):"); pdf.set_font("Arial", 'B', size=10); pdf.cell(0, 7, formatar_numero_para_exibicao(valor_cota_val, casas_decimais=2), ln=True); pdf.set_font("Arial", size=10)
+
     pdf.ln(10)
     pdf.set_font("Arial", 'I', size=9); pdf.cell(0, 7, "Patrícia Melo e Souza", ln=True, align='C'); pdf.cell(0, 5, "Diretora de Seguridade", ln=True, align='C')
     
-    # AJUSTE: Incluir NRelacao no nome do arquivo para diferenciá-lo
     output_filename = f"relacao_credito_{dados.get('Nome', 'Desconhecido').replace(' ', '_')}_N{numero_relacao}.pdf"
     pdf.output(output_filename, 'F')
     return output_filename
-
-def formatar_moeda_para_exibicao(valor_numerico):
-    try:
-        # Tenta formatar como moeda pt_BR, que usa vírgula para decimal e ponto para milhar
-        return locale.currency(float(valor_numerico), grouping=True, symbol=None)
-    except (ValueError, TypeError):
-        return "0,00"
-
-def desformatar_string_para_float(valor_str):
-    if valor_str is None or str(valor_str).strip() == "" or str(valor_str).lower() == 'nan':
-        return 0.0
-    try:
-        # Remove separadores de milhar pt-BR (.), depois substitui vírgula decimal pt-BR (,) por ponto (.)
-        return float(str(valor_str).replace('.', '').replace(',', '.'))
-    except ValueError:
-        # Tenta tratar como se já fosse um float em formato de string com ponto decimal
-        try:
-            return float(valor_str)
-        except ValueError:
-            st.warning(f"Não foi possível converter '{valor_str}' para número. Usando 0.0.")
-            return 0.0
-
-# --- FUNÇÃO PARA SUBSTITUIÇÃO MAIS ROBUSTA (ajustada para manter estilo) ---
-def replace_placeholders_in_document(doc, substitutions):
-    """
-    Substitui placeholders em parágrafos e células de tabelas do documento DOCX.
-    Esta função tenta ser mais robusta para placeholders que podem estar divididos em runs,
-    e tenta preservar o estilo da primeira run.
-    """
-    # Helper para processar runs e preservar estilo
-    def process_paragraph_runs(p, key, value):
-        full_text = "".join([run.text for run in p.runs])
-        if key in full_text:
-            new_full_text = full_text.replace(key, value)
-            
-            # Se houver runs, tente manter o estilo da primeira
-            if p.runs:
-                first_run_style = p.runs[0].style # Guarda o estilo da primeira run
-                first_run_font = p.runs[0].font # Guarda as propriedades da fonte
-                
-                # Limpar todas as runs existentes removendo os elementos XML
-                # Cria uma lista para evitar problemas de modificação durante iteração
-                for run in list(p.runs): 
-                    p.runs[0]._element.getparent().remove(run._element) 
-                
-                # Adicionar uma nova run e aplicar o estilo da primeira run
-                new_run = p.add_run(new_full_text)
-                new_run.style = first_run_style
-                new_run.font.name = first_run_font.name
-                new_run.font.size = first_run_font.size
-                new_run.font.bold = first_run_font.bold
-                new_run.font.italic = first_run_font.italic
-                new_run.font.underline = first_run_font.underline
-            else: # Se não houver runs (parágrafo vazio), crie uma nova
-                p.add_run(new_full_text)
-
-    # Para parágrafos no corpo principal
-    for p in doc.paragraphs:
-        for key, value in substitutions.items():
-            process_paragraph_runs(p, key, value)
-
-    # Para tabelas
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for key, value in substitutions.items():
-                        process_paragraph_runs(p, key, value)
-    
-    # Para cabeçalhos e rodapés (se houver)
-    for section in doc.sections:
-        # Cabeçalhos
-        if section.header:
-            for p in section.header.paragraphs:
-                for key, value in substitutions.items():
-                    process_paragraph_runs(p, key, value)
-            for table in section.header.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for p in cell.paragraphs:
-                            for key, value in substitutions.items():
-                                process_paragraph_runs(p, key, value)
-
-        # Rodapés
-        if section.footer:
-            for p in section.footer.paragraphs:
-                for key, value in substitutions.items():
-                    process_paragraph_runs(p, key, value)
-            for table in section.footer.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for p in cell.paragraphs:
-                            for key, value in substitutions.items():
-                                process_paragraph_runs(p, key, value)
 
 
 def gerar_documento_quitacao(dados_completos):
@@ -367,7 +438,6 @@ def gerar_documento_quitacao(dados_completos):
         deficit_2022_val = desformatar_string_para_float(dados_completos.get('Deficit2022', '0'))
         debito_total_deficit_rs = deficit_2014_val + deficit_2022_val
 
-        # Lógica para {{DESCRICAO_DEFICIT}}
         anos_com_deficit = []
         if deficit_2014_val > 0:
             anos_com_deficit.append("2014")
@@ -389,42 +459,39 @@ def gerar_documento_quitacao(dados_completos):
         "{{N_REF}}": str(dados_completos.get('NRefDoc', '')),
         "{{NOME_PARTICIPANTE}}": str(dados_completos.get('Nome', '')),
         "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')),
-        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''), # Tratamento para 'nan'
+        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''),
         "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')),
         "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')),
         "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}",
-        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
+        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')),
         "{{ASSUNTO_PLANO}}": str(dados_completos.get('Plano', '')),
         "{{ASSUNTO_EMPRESA}}": str(dados_completos.get('Patrocinadora', '')),
         "{{DATA_PAGAMENTO_CREDITO}}": str(dados_completos.get('DataPagamento', '')),
         "{{MES_CALCULO_COTA}}": str(dados_completos.get('MesCalculoCotaDoc', '')),
-        "{{SALDO_RESERVA_COTAS}}": formatar_moeda_para_exibicao(qtde_cotas),
-        "{{VALOR_DA_COTA_RS}}": formatar_moeda_para_exibicao(valor_cota),
+        "{{SALDO_RESERVA_COTAS}}": formatar_numero_para_exibicao(qtde_cotas, casas_decimais=2),
+        "{{VALOR_DA_COTA_RS}}": formatar_numero_para_exibicao(valor_cota, casas_decimais=2),
         "{{TOTAL_RESERVA_POUPANCA_RS}}": formatar_moeda_para_exibicao(total_reserva_poupanca_rs),
         "{{DEBITO_TOTAL_DEFICIT_RS}}": formatar_moeda_para_exibicao(debito_total_deficit_rs),
-        "{{DESCRICAO_DEFICIT}}": placeholder_descricao_deficit, # Atualizado
+        "{{DESCRICAO_DEFICIT}}": placeholder_descricao_deficit,
         "{{VALOR_A_RECEBER_RS}}": formatar_moeda_para_exibicao(valor_a_receber_rs)
     }
 
-    # --- LINHAS DE DEBUG ADICIONADAS PARA QUITAÇÃO ---
     st.write("---")
     st.write("### Debugging: Dicionário de Substituições para Quitação")
-    st.json(substituicoes) # Usa st.json para uma visualização mais legível
+    st.json(substituicoes)
     st.write("---")
-    # --------------------------------------------------
 
-    # Chama a nova função de substituição
     replace_placeholders_in_document(doc, substituicoes)
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"quitacao_deficit_{nome_base}.docx"
-    output_pdf_path = f"quitacao_deficit_{nome_base}.pdf" # Still generate a potential name
+    output_pdf_path = f"quitacao_deficit_{nome_base}.pdf"
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
         st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
-        return None, output_docx_path # Return None for PDF as it's not guaranteed
+        return None, output_docx_path
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
@@ -440,7 +507,6 @@ def gerar_documento_portabilidade(dados_completos):
         return None, None
 
     try:
-        # Cálculos de valores (ajuste se a lógica for diferente)
         parcela_participante_val = desformatar_string_para_float(dados_completos.get('Parcela_Participante', '0'))
         parcela_patrocinadora_val = desformatar_string_para_float(dados_completos.get('Parcela_Patrocinadora', '0'))
         debito_val = desformatar_string_para_float(dados_completos.get('debito', '0'))
@@ -455,13 +521,13 @@ def gerar_documento_portabilidade(dados_completos):
     substituicoes = {
         "{{NOME_PARTICIPANTE}}": str(dados_completos.get('Nome', '')),
         "{{CPF}}": str(dados_completos.get('CPF', '')),
-        "{{Matricula}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
-        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''), # Reutilizado
-        "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')), # Reutilizado
-        "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')), # Reutilizado
-        "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}", # Reutilizado
-        "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')), # Reutilizado
-        "{{ASSUNTO_EMPRESA}}": str(dados_completos.get('Patrocinadora', '')), # Reutilizado
+        "{{Matricula}}": formatar_matricula(dados_completos.get('Matricula', '')),
+        "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''),
+        "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')),
+        "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')),
+        "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')),
+        "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}",
+        "{{ASSUNTO_EMPRESA}}": str(dados_completos.get('Patrocinadora', '')),
         "{{Data_admissao}}": str(dados_completos.get('Data_admissao', '')),
         "{{Data_desligamento}}": str(dados_completos.get('Data_desligamento', '')),
         "{{Data_inscricao}}": str(dados_completos.get('Data_inscricao', '')),
@@ -488,30 +554,26 @@ def gerar_documento_portabilidade(dados_completos):
         "{{Data_base}}": str(dados_completos.get('Data_base_portabilidade', ''))
     }
 
-    # --- LINHAS DE DEBUG ADICIONADAS PARA PORTABILIDADE ---
     st.write("---")
     st.write("### Debugging: Dicionário de Substituições para Termo de Portabilidade")
-    st.json(substituicoes) # Usa st.json para uma visualização mais legível
+    st.json(substituicoes)
     st.write("---")
-    # -------------------------------------------------------
 
-    # Chama a nova função de substituição para o Termo de Portabilidade
     replace_placeholders_in_document(doc, substituicoes)
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"termo_portabilidade_{nome_base}.docx"
-    output_pdf_path = f"termo_portabilidade_{nome_base}.pdf" # Still generate a potential name
+    output_pdf_path = f"termo_portabilidade_{nome_base}.pdf"
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
         st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
-        return None, output_docx_path # Return None for PDF
+        return None, output_docx_path
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
 
-# --- NOVA FUNÇÃO: GERAR CARTA DE PORTABILIDADE ENTRE PLANOS ---
 def gerar_documento_carta_portabilidade(dados_completos):
     if not os.path.exists(WORD_TEMPLATE_CARTA_PATH):
         st.error(f"Template Word da Carta de Portabilidade '{WORD_TEMPLATE_CARTA_PATH}' não encontrado! Por favor, converta seu template .doc para .docx.")
@@ -522,32 +584,27 @@ def gerar_documento_carta_portabilidade(dados_completos):
         st.error(f"Erro ao carregar o template Word da Carta de Portabilidade '{WORD_TEMPLATE_CARTA_PATH}': {e}")
         return None, None
 
-    # Obter dados já existentes do CSV ou preenchidos anteriormente
-    # Usando .get() para garantir que não haja erro se a chave não existir
     data_transferencia = str(dados_completos.get('Data_de_Transferencia_Carta', ''))
     banco_carta = str(dados_completos.get('Banco_Carta', ''))
     agencia_carta = str(dados_completos.get('Agencia_Carta', ''))
     conta_corrente_carta = str(dados_completos.get('Conta_Corrente_Carta', ''))
 
     substituicoes = {
-        # Dados do participante (já existem)
         "{{NOME_PARTICIPANTE}}": str(dados_completos.get('Nome', '')),
-        # CORREÇÃO AQUI: Garante que 'Complemento' é string antes de chamar replace
+        # CORREÇÃO AQUI: Garante que o valor é string antes de chamar replace
         "{{ENDERECO_COMPLEMENTO}}": str(dados_completos.get('Complemento', '')).replace('nan', ''), 
         "{{ENDERECO_RUA}}": str(dados_completos.get('Rua', '')),
         "{{ENDERECO_BAIRRO}}": str(dados_completos.get('Bairro', '')),
         "{{ENDERECO_CEP}}": str(dados_completos.get('CEP', '')),
         "{{ENDERECO_CIDADE_UF}}": f"{dados_completos.get('Cidade', '')} - {dados_completos.get('UF', '')}",
-        "{{ASSUNTO_PLANO}}": str(dados_completos.get('Plano', '')), # Plano original
-        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')), # FORMATAR MATRICULA
+        "{{ASSUNTO_PLANO}}": str(dados_completos.get('Plano', '')),
+        "{{ASSUNTO_MATRICULA}}": formatar_matricula(dados_completos.get('Matricula', '')),
         "{{CPF}}": str(dados_completos.get('CPF', '')),
-        # Dados específicos da carta de portabilidade (inputs do usuário)
         "{{DATA_DE_TRANSFERENCIA}}": data_transferencia,
         "{{BANCO}}": banco_carta,
         "{{AGENCIA}}": agencia_carta,
-        "{{CONTA_CORRENTE}}": formatar_conta(conta_corrente_carta), # FORMATAR CONTA
-        "{{N_Ref}}": str(dados_completos.get('NRefDoc', '')), # Reutiliza NRefDoc se quiser
-        # Data atual para o cabeçalho da carta
+        "{{CONTA_CORRENTE}}": formatar_conta(conta_corrente_carta),
+        "{{N_Ref}}": str(dados_completos.get('NRefDoc', '')),
         "{{DATA_ATUAL_CARTA}}": datetime.now().strftime("%d de %B de %Y").replace(
             'January', 'janeiro').replace('February', 'fevereiro').replace('March', 'março').replace(
             'April', 'abril').replace('May', 'maio').replace('June', 'junho').replace(
@@ -555,30 +612,27 @@ def gerar_documento_carta_portabilidade(dados_completos):
             'October', 'outubro').replace('November', 'novembro').replace('December', 'dezembro'),
     }
     
-    # --- LINHAS DE DEBUG ADICIONADAS PARA CARTA DE PORTABILIDADE ---
     st.write("---")
     st.write("### Debugging: Dicionário de Substituições para Carta de Portabilidade")
-    st.json(substituicoes) # Usa st.json para uma visualização mais legível
+    st.json(substituicoes)
     st.write("---")
-    # ---------------------------------------------------------------
 
     replace_placeholders_in_document(doc, substituicoes)
 
     nome_base = str(dados_completos.get('Nome', 'Desconhecido')).replace(' ', '_').replace('/', '_')
     output_docx_path = f"carta_portabilidade_{nome_base}.docx"
-    output_pdf_path = f"carta_portabilidade_{nome_base}.pdf" # Still generate a potential name
+    output_pdf_path = f"carta_portabilidade_{nome_base}.pdf"
 
     try:
         doc.save(output_docx_path)
         st.info(f"Arquivo DOCX '{output_docx_path}' gerado.")
         st.warning("A conversão para PDF pode não funcionar em ambientes de nuvem (Streamlit Cloud) sem o Microsoft Word ou LibreOffice instalado.")
-        return None, output_docx_path # Return None for PDF
+        return None, output_docx_path
     except Exception as e_docx:
         st.error(f"Erro ao salvar o documento DOCX: {e_docx}")
         return None, None
 
 
-# Initialize session state for file paths if not already present
 if 'download_pdf_relacao' not in st.session_state:
     st.session_state.download_pdf_relacao = None
 if 'download_docx_quitacao' not in st.session_state:
@@ -587,9 +641,6 @@ if 'download_docx_portabilidade' not in st.session_state:
     st.session_state.download_docx_portabilidade = None
 if 'download_docx_carta' not in st.session_state:
     st.session_state.download_docx_carta = None
-
-# --- STREAMLIT UI ---
-# ATUALIZAR AS ABAS AQUI
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📥 Formulário Inicial", "📊 Kanban", "📝 Relação de Crédito", "📉 Desconto de Déficit", "📄 Termo de Portabilidade", "📧 Carta de Portabilidade"])
 
@@ -602,7 +653,27 @@ with tab1:
         cpf_t1 = st.text_input("CPF", key="cpf_t1")
         email_t1 = st.text_input("Email Contato", key="email_t1")
         comentario_t1 = st.text_area("Comentário", key="com_t1")
-        area_t1 = st.selectbox("Área", list(EMAILS_POR_AREA.keys()), key="area_t1_sb")
+        
+        area_t1 = st.selectbox("Área Principal do Formulário", list(EMAILS_POR_AREA.keys()), key="area_t1_sb")
+        
+        todos_os_emails_internos = []
+        for emails_lista in EMAILS_POR_AREA.values():
+            todos_os_emails_internos.extend(emails_lista)
+        todos_os_emails_internos.extend(["contato.geral.adicional@empresa.com.br", "outro.diretor@empresa.com.br"]) 
+        todos_os_emails_internos = sorted(list(set(todos_os_emails_internos)))
+
+        default_emails_selecionados = st.session_state.get(f"area_t1_default_emails_{area_t1}", EMAILS_POR_AREA.get(area_t1, []))
+
+        destinatarios_internos_selecionados = st.multiselect(
+            "Destinatários Internos da Notificação (inclui e-mails da área selecionada por padrão)",
+            options=todos_os_emails_internos,
+            default=default_emails_selecionados,
+            help="Escolha outros endereços de e-mail que devem receber a notificação sobre este formulário, além dos e-mails da área principal selecionada.",
+            key=f"dest_internos_multi_{area_t1}"
+        )
+        
+        st.session_state[f"area_t1_default_emails_{area_t1}"] = destinatarios_internos_selecionados
+
         enviado_t1 = st.form_submit_button("🚀 Enviar")
         if enviado_t1:
             if nome_t1 and email_t1 and cpf_t1:
@@ -615,36 +686,35 @@ with tab1:
                     "Parcela_Participante": "0,00", "Parcela_Patrocinadora": "0,00",
                     "Total_acumulado": "0,00", "Recursos_portados": "0,00", "debito": "0,00",
                     "total_a_ser_portado": "0,00",
-                    "NRelacao": obter_proximo_n_relacao() # ATUALIZADO: Inicializa NRelacao
+                    "NRelacao": obter_proximo_n_relacao()
                 })
                 salvar_dados(novo_dado)
                 st.success(f"✅ Dados de {nome_t1} salvos!")
-                enviar_email(email_t1, nome_t1, area_t1) # Envia e-mail
+                
+                enviar_email(email_t1, nome_t1, destinatarios_internos_selecionados) 
                 st.rerun()
             else:
                 st.warning("⚠️ Preencha Nome, CPF e Email.")
 
 with tab2: # KANBAN
     st.header("📌 Painel Kanban")
-    # Certificar que todas as etapas são colunas
-    colunas_kanban = st.columns(len(ETAPAS))
-    df_kanban = carregar_dados() # Recarrega para garantir dados atualizados
+    
+    etapas_para_kanban = [e for e in ETAPAS if e != "Processo Concluído"]
+    colunas_kanban = st.columns(len(etapas_para_kanban))
+    df_kanban = carregar_dados()
 
-    for i, etapa_k in enumerate(ETAPAS):
+    for i, etapa_k in enumerate(etapas_para_kanban):
         with colunas_kanban[i]:
-            # Filtrar por etapa, garantindo que "Etapa" exista
             etapa_df_k = df_kanban[df_kanban["Etapa"] == etapa_k] if "Etapa" in df_kanban.columns else pd.DataFrame()
             st.subheader(f"{etapa_k} ({len(etapa_df_k)})")
             
-            # Ordenar por nome para consistência
             etapa_df_k = etapa_df_k.sort_values(by="Nome", ascending=True)
 
             for idx_k, row_k in etapa_df_k.iterrows():
                 key_base_k = f"{row_k.get('Nome','key')}_{idx_k}_{etapa_k.replace(' ','_')}"
                 with st.expander(f"{row_k.get('Nome','Sem Nome')} ({row_k.get('Area','N/A')})", expanded=False):
-                    st.caption(f"Matrícula: {formatar_matricula(row_k.get('Matricula', 'N/A'))} | CPF: {row_k.get('CPF', 'N/A')}") # FORMATAR MATRICULA
+                    st.caption(f"Matrícula: {formatar_matricula(row_k.get('Matricula', 'N/A'))} | CPF: {row_k.get('CPF', 'N/A')}")
                     
-                    # Botões de transição
                     if etapa_k == "Aguardando Resposta":
                         if st.button("✅ Respondido", key=f"resp_{key_base_k}"):
                             atualizar_etapa(row_k["Nome"], "Respondido"); st.rerun()
@@ -675,11 +745,8 @@ with tab2: # KANBAN
                     elif etapa_k == "Carta de Portabilidade":
                         st.info("Preencher na Aba 'Carta de Portabilidade'")
                         if st.button("✔️ Concluído", key=f"concluido_{key_base_k}"):
-                            # Aqui você pode definir uma etapa "Concluído" ou remover do Kanban
+                            atualizar_etapa(row_k["Nome"], "Processo Concluído")
                             st.success(f"Processo para {row_k['Nome']} marcado como concluído!")
-                            # Exemplo: df_kanban.drop(idx_k, inplace=True) e salvar_dados(df_kanban)
-                            # Ou mudar para uma etapa "Concluído" que não aparece nas colunas ativas
-                            atualizar_etapa(row_k["Nome"], "Processo Concluído") # Exemplo
                             st.rerun()
                         if st.button("⏪ Voltar para Termo de Portabilidade", key=f"volt_termo_carta_{key_base_k}"):
                             atualizar_etapa(row_k["Nome"], "Termo de Portabilidade"); st.rerun()
@@ -694,12 +761,10 @@ with tab3: # Relação de Crédito
         st.info("Nenhum formulário na etapa 'Relação de Crédito'.")
     else:
         for idx, row in df_relacao_credito.iterrows():
-            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
-                # Formulario para entrada de dados
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False):
                 with st.form(f"form_relacao_credito_{row['Nome']}"):
-                    st.write(f"Preenchendo dados para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+                    st.write(f"Preenchendo dados para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})")
 
-                    # Dados para Relação de Crédito
                     creditar = st.text_input("Creditar", value=row.get('Creditar', 'Banco Bradesco'), key=f"cred_{idx}")
                     banco = st.text_input("Banco (Código)", value=row.get('Banco', ''), key=f"bank_{idx}")
                     conta = st.text_input("Conta", value=row.get('Conta', ''), key=f"acc_{idx}")
@@ -710,8 +775,9 @@ with tab3: # Relação de Crédito
                     patrocinadora = st.text_input("Patrocinadora", value=row.get('Patrocinadora', 'FURNAS'), key=f"pat_{idx}")
                     plano = st.text_input("Plano", value=row.get('Plano', 'CONTRIBUIÇÃO DEFINIDA - CD'), key=f"plano_{idx}")
                     
-                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_{idx}")
-                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_{idx}")
+                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=str(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_{idx}")
+                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=str(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_{idx}")
+
                     data_valor_cota = st.text_input("Data do Valor da Cota (dd/mm/aaaa)", value=row.get('DataValorCota', ''), key=f"data_vc_{idx}")
 
                     mes_ano_relacao = st.text_input("Mês/Ano da Relação (ex: jun/25)", value=row.get('MesAnoRelacao', datetime.now().strftime("%b/%y").lower()), key=f"mar_{idx}")
@@ -722,7 +788,8 @@ with tab3: # Relação de Crédito
 
                     col_rua, col_comp = st.columns(2)
                     rua = col_rua.text_input("Rua", value=row.get('Rua', ''), key=f"rua_{idx}")
-                    complemento = col_comp.text_input("Complemento", value=row.get('Complemento', ''), key=f"comp_{idx}")
+                    # CORREÇÃO AQUI: Garante que o valor é string antes de chamar replace
+                    complemento = col_comp.text_input("Complemento", value=str(row.get('Complemento', '')).replace('nan', ''), key=f"comp_{idx}")
                     
                     col_bairro, col_cep = st.columns(2)
                     bairro = col_bairro.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_{idx}")
@@ -750,12 +817,10 @@ with tab3: # Relação de Crédito
                         salvar_dados_completos(row['Nome'], dados_atualizados)
                         st.success(f"Dados de Relação de Crédito para {row['Nome']} salvos!")
                         
-                        # Store the generated file path in session state
-                        pdf_path = gerar_pdf_relacao_credito(row.to_dict()) # Passa os dados completos, incluindo os salvos
-                        st.session_state.download_pdf_relacao = pdf_path # Store the path
+                        pdf_path = gerar_pdf_relacao_credito(row.to_dict())
+                        st.session_state.download_pdf_relacao = pdf_path
                         st.rerun()
                 
-                # Download button outside the form, conditioned on the session state
                 if st.session_state.download_pdf_relacao:
                     if os.path.exists(st.session_state.download_pdf_relacao):
                         with open(st.session_state.download_pdf_relacao, "rb") as file:
@@ -764,13 +829,8 @@ with tab3: # Relação de Crédito
                                 data=file,
                                 file_name=os.path.basename(st.session_state.download_pdf_relacao),
                                 mime="application/pdf",
-                                key=f"download_btn_relacao_{idx}" # Unique key for each button
+                                key=f"download_btn_relacao_{idx}"
                             )
-                        # Clear the session state after download button is displayed once
-                        # This prevents the button from showing up on subsequent page loads/reruns unless a new file is generated
-                        # Or, you can choose to keep it until the user navigates away or clears it explicitly.
-                        # For this example, we'll keep it simple and just show it once per generation.
-                        # st.session_state.download_pdf_relacao = None 
                     else:
                         st.error(f"Arquivo PDF não encontrado em: {st.session_state.download_pdf_relacao}")
 
@@ -783,11 +843,10 @@ with tab4: # Desconto de Quitação de Déficit
         st.info("Nenhum formulário na etapa 'Desconto de quitação de deficit'.")
     else:
         for idx, row in df_deficit_quitacao.iterrows():
-            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False):
                 with st.form(f"form_deficit_{row['Nome']}"):
-                    st.write(f"Preenchendo dados de quitação de déficit para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+                    st.write(f"Preenchendo dados de quitação de déficit para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})")
 
-                    # Campos para Déficit
                     deficit_2014_str = st.text_input("Déficit 2014 (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Deficit2014', '0'))), key=f"def14_{idx}")
                     deficit_2022_str = st.text_input("Déficit 2022 (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('Deficit2022', '0'))), key=f"def22_{idx}")
                     
@@ -795,8 +854,8 @@ with tab4: # Desconto de Quitação de Déficit
                     data_pagamento = st.text_input("Data de Pagamento (dd/mm/aaaa)", value=row.get('DataPagamento', ''), key=f"dp_q_{idx}")
                     mes_calculo_cota_doc = st.text_input("Mês de Cálculo Cota (Doc)", value=row.get('MesCalculoCotaDoc', ''), key=f"mes_calc_cota_q_doc_{idx}")
                     
-                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_q_{idx}")
-                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=formatar_moeda_para_exibicao(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_q_{idx}")
+                    qtde_cotas_str = st.text_input("Qtde. de Cotas", value=str(desformatar_string_para_float(row.get('QtdeCotas', '0'))), key=f"qtde_cotas_q_{idx}")
+                    valor_cota_str = st.text_input("Valor da Cota (R$)", value=str(desformatar_string_para_float(row.get('ValorCota', '0'))), key=f"valor_cota_q_{idx}")
                     data_valor_cota = st.text_input("Data do Valor da Cota (dd/mm/aaaa)", value=row.get('DataValorCota', ''), key=f"data_vc_q_{idx}")
 
 
@@ -816,10 +875,9 @@ with tab4: # Desconto de Quitação de Déficit
                         st.success(f"Dados de Desconto de Quitação para {row['Nome']} salvos!")
                         
                         pdf_path_quit, docx_path_quit = gerar_documento_quitacao(dados_completos_apos_salvar)
-                        st.session_state.download_docx_quitacao = docx_path_quit # Store the path
+                        st.session_state.download_docx_quitacao = docx_path_quit
                         st.rerun()
                 
-                # Download button outside the form
                 if st.session_state.download_docx_quitacao:
                     if os.path.exists(st.session_state.download_docx_quitacao):
                         with open(st.session_state.download_docx_quitacao, "rb") as file:
@@ -833,7 +891,6 @@ with tab4: # Desconto de Quitação de Déficit
                     else:
                         st.error(f"Arquivo DOCX não encontrado em: {st.session_state.download_docx_quitacao}")
 
-
 with tab5: # Termo de Portabilidade
     st.header("📄 Termo de Portabilidade")
     df_portabilidade = carregar_dados()
@@ -843,17 +900,17 @@ with tab5: # Termo de Portabilidade
         st.info("Nenhum formulário na etapa 'Termo de Portabilidade'.")
     else:
         for idx, row in df_termo_portabilidade.iterrows():
-            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False):
                 with st.form(f"form_termo_portabilidade_{row['Nome']}"):
-                    st.write(f"Preenchendo dados para Termo de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+                    st.write(f"Preenchendo dados para Termo de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})")
 
-                    # Dados do Participante (podem ser pré-preenchidos do formulário inicial)
                     st.subheader("Dados do Participante (revisar)")
                     st.text_input("Nome", value=row.get('Nome', ''), disabled=True)
                     st.text_input("CPF", value=row.get('CPF', ''), disabled=True)
-                    st.text_input("Matrícula", value=formatar_matricula(row.get('Matricula', '')), disabled=True) # FORMATAR MATRICULA
+                    st.text_input("Matrícula", value=formatar_matricula(row.get('Matricula', '')), disabled=True)
                     st.text_input("Rua", value=row.get('Rua', ''), key=f"rua_port_{idx}")
-                    st.text_input("Complemento", value=row.get('Complemento', '').replace('nan', ''), key=f"comp_port_{idx}")
+                    # CORREÇÃO AQUI: Garante que o valor é string antes de chamar replace
+                    complemento = st.text_input("Complemento", value=str(row.get('Complemento', '')).replace('nan', ''), key=f"comp_port_{idx}")
                     st.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_port_{idx}")
                     st.text_input("CEP", value=row.get('CEP', ''), key=f"cep_port_{idx}")
                     st.text_input("Cidade", value=row.get('Cidade', ''), key=f"cidade_port_{idx}")
@@ -909,10 +966,9 @@ with tab5: # Termo de Portabilidade
                         st.success(f"Dados de Termo de Portabilidade para {row['Nome']} salvos!")
 
                         pdf_path_port, docx_path_port = gerar_documento_portabilidade(dados_completos_apos_salvar)
-                        st.session_state.download_docx_portabilidade = docx_path_port # Store the path
+                        st.session_state.download_docx_portabilidade = docx_path_port
                         st.rerun()
 
-                # Download button outside the form
                 if st.session_state.download_docx_portabilidade:
                     if os.path.exists(st.session_state.download_docx_portabilidade):
                         with open(st.session_state.download_docx_portabilidade, "rb") as file:
@@ -935,11 +991,10 @@ with tab6: # Carta de Portabilidade
         st.info("Nenhum formulário na etapa 'Carta de Portabilidade'.")
     else:
         for idx, row in df_carta.iterrows():
-            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False): # FORMATAR MATRICULA
+            with st.expander(f"Detalhes de {row['Nome']} - Matrícula: {formatar_matricula(row['Matricula'])}", expanded=False):
                 with st.form(f"form_carta_portabilidade_{row['Nome']}"):
-                    st.write(f"Preenchendo dados para Carta de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})") # FORMATAR MATRICULA
+                    st.write(f"Preenchendo dados para Carta de Portabilidade para **{row['Nome']}** (Matrícula: {formatar_matricula(row['Matricula'])})")
 
-                    # Campos específicos para a Carta de Portabilidade
                     data_transferencia_carta = st.text_input("Data de Transferência (dd/mm/aaaa)", value=row.get('Data_de_Transferencia_Carta', ''), key=f"data_transf_c_{idx}")
                     banco_carta = st.text_input("Banco (para carta)", value=row.get('Banco_Carta', ''), key=f"banco_c_{idx}")
                     agencia_carta = st.text_input("Agência (para carta)", value=row.get('Agencia_Carta', ''), key=f"ag_c_{idx}")
@@ -948,11 +1003,12 @@ with tab6: # Carta de Portabilidade
                     st.subheader("Dados do Participante (revisar para a Carta)")
                     st.text_input("Nome do Participante", value=row.get('Nome', ''), disabled=True)
                     st.text_input("CPF do Participante", value=row.get('CPF', ''), disabled=True)
-                    st.text_input("Matrícula do Participante", value=formatar_matricula(row.get('Matricula', '')), disabled=True) # FORMATAR MATRICULA
+                    st.text_input("Matrícula do Participante", value=formatar_matricula(row.get('Matricula', '')), disabled=True)
                     st.text_input("Plano Original", value=row.get('Plano', ''), disabled=True)
                     
                     st.text_input("Rua", value=row.get('Rua', ''), key=f"rua_carta_{idx}")
-                    st.text_input("Complemento", value=row.get('Complemento', '').replace('nan', ''), key=f"comp_carta_{idx}")
+                    # CORREÇÃO AQUI: Garante que o valor é string antes de chamar replace
+                    complemento = st.text_input("Complemento", value=str(row.get('Complemento', '')).replace('nan', ''), key=f"comp_carta_{idx}")
                     st.text_input("Bairro", value=row.get('Bairro', ''), key=f"bairro_carta_{idx}")
                     st.text_input("CEP", value=row.get('CEP', ''), key=f"cep_carta_{idx}")
                     st.text_input("Cidade", value=row.get('Cidade', ''), key=f"cidade_carta_{idx}")
@@ -975,10 +1031,9 @@ with tab6: # Carta de Portabilidade
                         st.success(f"Dados de Carta de Portabilidade para {row['Nome']} salvos!")
                         
                         pdf_path_carta, docx_path_carta = gerar_documento_carta_portabilidade(dados_completos_apos_salvar)
-                        st.session_state.download_docx_carta = docx_path_carta # Store the path
+                        st.session_state.download_docx_carta = docx_path_carta
                         st.rerun()
                 
-                # Download button outside the form
                 if st.session_state.download_docx_carta:
                     if os.path.exists(st.session_state.download_docx_carta):
                         with open(st.session_state.download_docx_carta, "rb") as file:
